@@ -18,7 +18,7 @@ class Database:
                 )
             ''')
             
-            # Accounts table (multi-account support)
+            # Accounts table
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS accounts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,13 +50,12 @@ class Database:
                 )
             ''')
             
-            # Auto reply rules
+            # Auto reply rules (UPDATED - Single message, no trigger)
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS auto_reply_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     account_id INTEGER,
-                    trigger_text TEXT,
                     reply_text TEXT,
                     is_active BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -87,7 +86,7 @@ class Database:
                 )
             ''')
             
-            # Escrow groups table
+            # Escrow groups
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS escrow_groups (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +100,7 @@ class Database:
                 )
             ''')
             
-            # Bot settings table
+            # Bot settings
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS bot_settings (
                     user_id INTEGER PRIMARY KEY,
@@ -138,8 +137,7 @@ class Database:
             
             await db.commit()
     
-    # ============ USER OPERATIONS ============
-    
+    # User operations
     async def add_user(self, user_id, username=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -148,11 +146,9 @@ class Database:
             )
             await db.commit()
     
-    # ============ ACCOUNT OPERATIONS ============
-    
+    # Account operations
     async def add_account(self, user_id, phone, api_id, api_hash, session_string):
         async with aiosqlite.connect(self.db_name) as db:
-            # Deactivate other accounts
             await db.execute(
                 'UPDATE accounts SET is_active = 0 WHERE user_id = ?',
                 (user_id,)
@@ -206,18 +202,7 @@ class Database:
             )
             await db.commit()
     
-    async def get_account_by_id(self, account_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM accounts WHERE id = ?',
-                (account_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return dict(row) if row else None
-    
-    # ============ SCHEDULED MESSAGES ============
-    
+    # Scheduled messages
     async def add_scheduled_message(self, user_id, account_id, target, message, schedule_time, is_recurring=False, recurring_pattern=None):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
@@ -259,14 +244,6 @@ class Database:
             )
             await db.commit()
     
-    async def update_schedule_time(self, schedule_id, new_time):
-        async with aiosqlite.connect(self.db_name) as db:
-            await db.execute(
-                'UPDATE scheduled_messages SET schedule_time = ? WHERE id = ?',
-                (new_time, schedule_id)
-            )
-            await db.commit()
-    
     async def delete_schedule(self, schedule_id, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -275,66 +252,42 @@ class Database:
             )
             await db.commit()
     
-    async def get_schedule_by_id(self, schedule_id):
+    # Auto reply operations (UPDATED - Single message)
+    async def add_auto_reply(self, user_id, account_id, reply_text):
         async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM scheduled_messages WHERE id = ?',
-                (schedule_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return dict(row) if row else None
-    
-    # ============ AUTO REPLY RULES ============
-    
-    async def add_auto_reply(self, user_id, account_id, trigger_text, reply_text):
-        async with aiosqlite.connect(self.db_name) as db:
+            # Deactivate existing
+            await db.execute(
+                'UPDATE auto_reply_rules SET is_active = 0 WHERE user_id = ? AND account_id = ?',
+                (user_id, account_id)
+            )
+            
             cursor = await db.execute(
-                '''INSERT INTO auto_reply_rules (user_id, account_id, trigger_text, reply_text)
-                   VALUES (?, ?, ?, ?)''',
-                (user_id, account_id, trigger_text, reply_text)
+                '''INSERT INTO auto_reply_rules (user_id, account_id, reply_text)
+                   VALUES (?, ?, ?)''',
+                (user_id, account_id, reply_text)
             )
             await db.commit()
             return cursor.lastrowid
     
-    async def get_auto_replies(self, user_id, account_id):
+    async def get_auto_reply(self, user_id, account_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 'SELECT * FROM auto_reply_rules WHERE user_id = ? AND account_id = ? AND is_active = 1',
                 (user_id, account_id)
             ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+                row = await cursor.fetchone()
+                return dict(row) if row else None
     
-    async def get_all_auto_replies(self, user_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM auto_reply_rules WHERE user_id = ? AND is_active = 1',
-                (user_id,)
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-    
-    async def delete_auto_reply(self, rule_id, user_id):
+    async def delete_auto_reply(self, user_id, account_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                'DELETE FROM auto_reply_rules WHERE id = ? AND user_id = ?',
-                (rule_id, user_id)
+                'DELETE FROM auto_reply_rules WHERE user_id = ? AND account_id = ?',
+                (user_id, account_id)
             )
             await db.commit()
     
-    async def toggle_auto_reply(self, rule_id, user_id, is_active):
-        async with aiosqlite.connect(self.db_name) as db:
-            await db.execute(
-                'UPDATE auto_reply_rules SET is_active = ? WHERE id = ? AND user_id = ?',
-                (is_active, rule_id, user_id)
-            )
-            await db.commit()
-    
-    # ============ ESCROW OPERATIONS ============
-    
+    # Escrow operations
     async def create_escrow_deal(self, user_id, account_id, chat_id, deal_data):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
@@ -358,63 +311,7 @@ class Database:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
     
-    async def update_escrow_agreement(self, deal_id, party_type):
-        async with aiosqlite.connect(self.db_name) as db:
-            if party_type == 'buyer':
-                await db.execute(
-                    'UPDATE escrow_deals SET buyer_agreed = 1 WHERE id = ?',
-                    (deal_id,)
-                )
-            else:
-                await db.execute(
-                    'UPDATE escrow_deals SET seller_agreed = 1 WHERE id = ?',
-                    (deal_id,)
-                )
-            await db.commit()
-    
-    async def update_escrow_status(self, deal_id, status, admin_approved=None):
-        async with aiosqlite.connect(self.db_name) as db:
-            if admin_approved is not None:
-                await db.execute(
-                    'UPDATE escrow_deals SET status = ?, admin_approved = ? WHERE id = ?',
-                    (status, admin_approved, deal_id)
-                )
-            else:
-                await db.execute(
-                    'UPDATE escrow_deals SET status = ? WHERE id = ?',
-                    (status, deal_id)
-                )
-            await db.commit()
-    
-    async def get_pending_escrow_deals(self):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                '''SELECT * FROM escrow_deals 
-                   WHERE status = 'waiting_admin' AND admin_approved = 0'''
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-    
-    async def get_user_escrow_deals(self, user_id, status=None):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            if status:
-                async with db.execute(
-                    'SELECT * FROM escrow_deals WHERE user_id = ? AND status = ? ORDER BY created_at DESC',
-                    (user_id, status)
-                ) as cursor:
-                    rows = await cursor.fetchall()
-            else:
-                async with db.execute(
-                    'SELECT * FROM escrow_deals WHERE user_id = ? ORDER BY created_at DESC',
-                    (user_id,)
-                ) as cursor:
-                    rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
-    
-    # ============ ESCROW GROUPS OPERATIONS ============
-    
+    # Escrow groups operations
     async def add_escrow_group(self, user_id, account_id, group_id, group_name):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
@@ -435,16 +332,6 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
     
-    async def get_all_escrow_groups(self, user_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM escrow_groups WHERE user_id = ? ORDER BY created_at DESC',
-                (user_id,)
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-    
     async def toggle_escrow_group(self, group_db_id, user_id, is_active):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -453,16 +340,7 @@ class Database:
             )
             await db.commit()
     
-    async def remove_escrow_group(self, group_db_id, user_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            await db.execute(
-                'DELETE FROM escrow_groups WHERE id = ? AND user_id = ?',
-                (group_db_id, user_id)
-            )
-            await db.commit()
-    
-    # ============ BOT SETTINGS ============
-    
+    # Bot settings
     async def get_user_setting(self, user_id, setting_key):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -471,11 +349,10 @@ class Database:
                 (user_id,)
             ) as cursor:
                 row = await cursor.fetchone()
-                return row[setting_key] if row else True  # Default to True
+                return row[setting_key] if row else True
     
     async def set_user_setting(self, user_id, setting_key, value):
         async with aiosqlite.connect(self.db_name) as db:
-            # Insert or update
             await db.execute(
                 f'''INSERT INTO bot_settings (user_id, {setting_key}) 
                     VALUES (?, ?)
@@ -484,18 +361,7 @@ class Database:
             )
             await db.commit()
     
-    async def get_all_user_settings(self, user_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM bot_settings WHERE user_id = ?',
-                (user_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return dict(row) if row else {'auto_start': True, 'escrow_monitoring': True}
-    
-    # ============ SENT MESSAGES LOG ============
-    
+    # Sent messages log
     async def log_sent_message(self, user_id, account_id, target, message):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -514,16 +380,7 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
     
-    async def get_sent_messages_count(self, user_id):
-        async with aiosqlite.connect(self.db_name) as db:
-            async with db.execute(
-                'SELECT COUNT(*) as count FROM sent_messages WHERE user_id = ?',
-                (user_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0]
-    
-    # ============ ANALYTICS ============
+    # Analytics
     async def log_action(self, user_id, action_type, details=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -590,54 +447,5 @@ class Database:
                 'total_accounts': total_accounts,
                 'active_accounts': active_accounts
             }
-    
-    async def get_recent_actions(self, user_id, limit=50):
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                'SELECT * FROM analytics WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
-                (user_id, limit)
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-    
-    # ============ UTILITY METHODS ============
 
-    async def execute_raw(self, query, params=None):
-        """Execute raw SQL query"""
-        async with aiosqlite.connect(self.db_name) as db:
-            if params:
-                await db.execute(query, params)
-            else:
-                await db.execute(query)
-            await db.commit()
-    
-    async def fetch_raw(self, query, params=None):
-        """Fetch results from raw SQL query"""
-        async with aiosqlite.connect(self.db_name) as db:
-            db.row_factory = aiosqlite.Row
-            if params:
-                async with db.execute(query, params) as cursor:
-                    rows = await cursor.fetchall()
-            else:
-                async with db.execute(query) as cursor:
-                    rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
-    
-    async def cleanup_old_data(self, days=30):
-        """Cleanup old data (sent messages, analytics)"""
-        async with aiosqlite.connect(self.db_name) as db:
-            # Clean old sent messages
-            await db.execute(
-                f"DELETE FROM sent_messages WHERE sent_at < datetime('now', '-{days} days')"
-            )
-            
-            # Clean old analytics
-            await db.execute(
-                f"DELETE FROM analytics WHERE created_at < datetime('now', '-{days} days')"
-            )
-            
-            await db.commit()
-
-# Create global database instance
 db = Database()
