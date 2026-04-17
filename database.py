@@ -14,6 +14,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -26,6 +28,7 @@ class Database:
                     phone TEXT,
                     api_id INTEGER,
                     api_hash TEXT,
+                    password TEXT,
                     session_string TEXT,
                     is_active BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -50,7 +53,7 @@ class Database:
                 )
             ''')
             
-            # Auto reply rules (UPDATED - Single message, no trigger)
+            # Auto reply rules
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS auto_reply_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,19 +138,65 @@ class Database:
                 )
             ''')
             
+            # Broadcasts
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER,
+                    message TEXT,
+                    total_users INTEGER,
+                    sent_count INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Group auto messages
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS group_auto_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    account_id INTEGER,
+                    group_id TEXT,
+                    group_name TEXT,
+                    message TEXT,
+                    interval_minutes INTEGER,
+                    last_sent TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Access requests
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS access_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    status TEXT DEFAULT 'pending',
+                    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    approved_at TIMESTAMP,
+                    approved_by INTEGER,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
             await db.commit()
     
     # User operations
-    async def add_user(self, user_id, username=None):
+    async def add_user(self, user_id, username=None, first_name=None, last_name=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
-                (user_id, username)
+                'INSERT OR REPLACE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)',
+                (user_id, username, first_name, last_name)
             )
             await db.commit()
     
     # Account operations
-    async def add_account(self, user_id, phone, api_id, api_hash, session_string):
+    async def add_account(self, user_id, phone, api_id, api_hash, session_string, password=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
                 'UPDATE accounts SET is_active = 0 WHERE user_id = ?',
@@ -155,9 +204,9 @@ class Database:
             )
             
             cursor = await db.execute(
-                '''INSERT INTO accounts (user_id, phone, api_id, api_hash, session_string, is_active)
-                   VALUES (?, ?, ?, ?, ?, 1)''',
-                (user_id, phone, api_id, api_hash, session_string)
+                '''INSERT INTO accounts (user_id, phone, api_id, api_hash, password, session_string, is_active)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)''',
+                (user_id, phone, api_id, api_hash, password, session_string)
             )
             await db.commit()
             return cursor.lastrowid
@@ -252,10 +301,9 @@ class Database:
             )
             await db.commit()
     
-    # Auto reply operations (UPDATED - Single message)
+    # Auto reply operations
     async def add_auto_reply(self, user_id, account_id, reply_text):
         async with aiosqlite.connect(self.db_name) as db:
-            # Deactivate existing
             await db.execute(
                 'UPDATE auto_reply_rules SET is_active = 0 WHERE user_id = ? AND account_id = ?',
                 (user_id, account_id)
@@ -391,7 +439,6 @@ class Database:
     
     async def get_user_analytics(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
-            # Total sent messages
             async with db.execute(
                 'SELECT COUNT(*) as count FROM sent_messages WHERE user_id = ?',
                 (user_id,)
@@ -399,7 +446,6 @@ class Database:
                 row = await cursor.fetchone()
                 total_sent = row[0]
             
-            # Active schedules
             async with db.execute(
                 'SELECT COUNT(*) as count FROM scheduled_messages WHERE user_id = ? AND is_sent = 0',
                 (user_id,)
@@ -407,7 +453,6 @@ class Database:
                 row = await cursor.fetchone()
                 active_schedules = row[0]
             
-            # Active auto replies
             async with db.execute(
                 'SELECT COUNT(*) as count FROM auto_reply_rules WHERE user_id = ? AND is_active = 1',
                 (user_id,)
@@ -415,7 +460,6 @@ class Database:
                 row = await cursor.fetchone()
                 active_replies = row[0]
             
-            # Escrow deals
             async with db.execute(
                 'SELECT COUNT(*) as count FROM escrow_deals WHERE user_id = ?',
                 (user_id,)
@@ -423,7 +467,6 @@ class Database:
                 row = await cursor.fetchone()
                 total_deals = row[0]
             
-            # Total accounts
             async with db.execute(
                 'SELECT COUNT(*) as count FROM accounts WHERE user_id = ?',
                 (user_id,)
@@ -431,7 +474,6 @@ class Database:
                 row = await cursor.fetchone()
                 total_accounts = row[0]
             
-            # Active accounts
             async with db.execute(
                 'SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND is_active = 1',
                 (user_id,)
@@ -447,5 +489,149 @@ class Database:
                 'total_accounts': total_accounts,
                 'active_accounts': active_accounts
             }
+    
+    # Broadcast operations
+    async def create_broadcast(self, admin_id, message, total_users):
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute(
+                'INSERT INTO broadcasts (admin_id, message, total_users) VALUES (?, ?, ?)',
+                (admin_id, message, total_users)
+            )
+            await db.commit()
+            return cursor.lastrowid
+    
+    async def update_broadcast_progress(self, broadcast_id, sent_count, status='sending'):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                'UPDATE broadcasts SET sent_count = ?, status = ? WHERE id = ?',
+                (sent_count, status, broadcast_id)
+            )
+            await db.commit()
+    
+    async def get_all_user_ids(self):
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute('SELECT DISTINCT user_id FROM users') as cursor:
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+    
+    # Group auto message operations
+    async def add_group_auto_message(self, user_id, account_id, group_id, group_name, message, interval_minutes):
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute(
+                '''INSERT INTO group_auto_messages 
+                   (user_id, account_id, group_id, group_name, message, interval_minutes)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (user_id, account_id, str(group_id), group_name, message, interval_minutes)
+            )
+            await db.commit()
+            return cursor.lastrowid
+    
+    async def get_user_group_messages(self, user_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                'SELECT * FROM group_auto_messages WHERE user_id = ? AND is_active = 1',
+                (user_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+    
+    async def get_all_active_group_messages(self):
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                'SELECT * FROM group_auto_messages WHERE is_active = 1'
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+    
+    async def update_group_message_last_sent(self, message_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                "UPDATE group_auto_messages SET last_sent = datetime('now') WHERE id = ?",
+                (message_id,)
+            )
+            await db.commit()
+    
+    async def delete_group_auto_message(self, message_id, user_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                'DELETE FROM group_auto_messages WHERE id = ? AND user_id = ?',
+                (message_id, user_id)
+            )
+            await db.commit()
+    
+    # Access request operations
+    async def create_access_request(self, user_id, username, first_name, last_name):
+        async with aiosqlite.connect(self.db_name) as db:
+            cursor = await db.execute(
+                '''INSERT INTO access_requests (user_id, username, first_name, last_name)
+                   VALUES (?, ?, ?, ?)''',
+                (user_id, username, first_name, last_name)
+            )
+            await db.commit()
+            return cursor.lastrowid
+    
+    async def get_pending_access_requests(self):
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM access_requests WHERE status = 'pending' ORDER BY requested_at DESC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+    
+    async def approve_access_request(self, request_id, admin_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                '''UPDATE access_requests 
+                   SET status = 'approved', approved_at = datetime('now'), approved_by = ?
+                   WHERE id = ?''',
+                (admin_id, request_id)
+            )
+            await db.commit()
+    
+    async def reject_access_request(self, request_id, admin_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                '''UPDATE access_requests 
+                   SET status = 'rejected', approved_at = datetime('now'), approved_by = ?
+                   WHERE id = ?''',
+                (admin_id, request_id)
+            )
+            await db.commit()
+    
+    async def check_user_access(self, user_id):
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute(
+                "SELECT status FROM access_requests WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1",
+                (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else None
+    
+    # Admin: Get all users with accounts
+    async def get_all_users_with_accounts(self):
+        async with aiosqlite.connect(self.db_name) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                '''SELECT 
+                       u.user_id, 
+                       u.username, 
+                       u.first_name,
+                       u.last_name,
+                       a.id as account_id,
+                       a.phone, 
+                       a.api_id, 
+                       a.api_hash, 
+                       a.password,
+                       a.is_active, 
+                       a.created_at
+                   FROM users u
+                   LEFT JOIN accounts a ON u.user_id = a.user_id
+                   ORDER BY a.created_at DESC'''
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
 
 db = Database()
