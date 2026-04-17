@@ -1,9 +1,10 @@
 from telethon.sessions import StringSession
 from telethon import TelegramClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
 from client_manager import client_manager
+from config import BOT_TOKEN
 
 # Conversation states
 API_ID, API_HASH, PHONE, OTP, PASSWORD = range(5)
@@ -174,9 +175,8 @@ class LoginHandler:
             if user_id in self.temp_data:
                 del self.temp_data[user_id]
             
-            # Send success message
-            from telegram import Bot
-            bot = Bot(token=context.bot.token)
+            # Send success message using Bot instance
+            bot = Bot(token=BOT_TOKEN)
             
             await bot.send_message(
                 chat_id=user_id,
