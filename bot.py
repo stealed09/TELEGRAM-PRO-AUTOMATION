@@ -1,4 +1,5 @@
 import asyncio
+import aiosqlite
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,6 +10,7 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
+from telegram.error import BadRequest
 from telethon import events
 
 from config import BOT_TOKEN, ADMIN_IDS
@@ -26,10 +28,33 @@ from analytics import analytics
 # Global storage
 user_states = {}
 
+# ============ ERROR HANDLER ============
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Handle errors"""
+    try:
+        raise context.error
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            # Ignore message not modified errors
+            pass
+        else:
+            print(f"BadRequest error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
+        if update and hasattr(update, 'effective_user'):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text=f"❌ An error occurred. Please try again.\n\nError: {str(e)[:100]}"
+                )
+            except:
+                pass
+
 # ============ STARTUP ============
 
 async def auto_start_users():
-    """Auto-start monitoring for users who have auto-start enabled"""
+    """Auto-start monitoring for users who have accounts"""
     try:
         async with aiosqlite.connect(db.db_name) as database:
             async with database.execute(
@@ -42,19 +67,22 @@ async def auto_start_users():
                     account = await db.get_active_account(user_id)
                     
                     if account:
-                        # Reconnect client
-                        await client_manager.create_client(
-                            user_id, account['id'],
-                            account['api_id'], account['api_hash'],
-                            account['session_string']
-                        )
-                        
-                        # Setup escrow monitoring
-                        await escrow_manager.setup_group_monitoring(user_id, account['id'])
-                        
-                        print(f"✅ Auto-started user {user_id}")
+                        try:
+                            # Reconnect client
+                            client = await client_manager.create_client(
+                                user_id, account['id'],
+                                account['api_id'], account['api_hash'],
+                                account['session_string']
+                            )
+                            
+                            # Setup escrow monitoring
+                            await escrow_manager.setup_group_monitoring(user_id, account['id'])
+                            
+                            print(f"✅ Auto-started user {user_id}")
+                        except Exception as e:
+                            print(f"❌ Failed to auto-start user {user_id}: {e}")
     except Exception as e:
-        print(f"Auto-start error: {e}")
+        print(f"❌ Auto-start error: {e}")
 
 # ============ START & MAIN MENU ============
 
@@ -102,39 +130,48 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     account = await db.get_active_account(user.id)
     
+    menu_text = f"🏠 **Main Menu**\n\n"
+    
     if account:
+        menu_text += f"Active Account: {account['phone']}\n\n"
+        menu_text += f"Choose an action:"
+        keyboard = menu_ui.main_menu()
+    else:
+        menu_text = "❌ No active account. Please login first."
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔐 Login", callback_data="add_account")
+        ]])
+    
+    try:
         await query.edit_message_text(
-            f"🏠 **Main Menu**\n\n"
-            f"Active Account: {account['phone']}\n\n"
-            f"Choose an action:",
-            reply_markup=menu_ui.main_menu(),
+            menu_text,
+            reply_markup=keyboard,
             parse_mode='Markdown'
         )
-    else:
-        await query.edit_message_text(
-            "❌ No active account. Please login first.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔐 Login", callback_data="add_account")
-            ]])
-        )
+    except BadRequest:
+        # Message already has same content, ignore
+        pass
 
 # ============ SEND MESSAGE ============
 
 async def send_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle send message"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "💬 **Send Message (Instant)**\n\n"
-        "Format:\n"
-        "`/send <target> <message>`\n\n"
-        "Examples:\n"
-        "`/send @username Hello!`\n"
-        "`/send 123456789 Hi there`\n"
-        "`/send -1001234567890 Group message`\n\n"
-        "⚡ **Sends instantly with ZERO delay!**",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "💬 **Send Message (Instant)**\n\n"
+            "Format:\n"
+            "`/send <target> <message>`\n\n"
+            "Examples:\n"
+            "`/send @username Hello!`\n"
+            "`/send 123456789 Hi there`\n"
+            "`/send -1001234567890 Group message`\n\n"
+            "⚡ **Sends instantly with ZERO delay!**",
+            parse_mode='Markdown',
+            reply_markup=menu_ui.back_button()
+        )
+    except BadRequest:
+        pass
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send message command"""
@@ -168,45 +205,54 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def schedule_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Schedule menu"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏰ **Advanced Message Scheduler**\n\n"
-        "Choose scheduling type:",
-        reply_markup=menu_ui.schedule_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "⏰ **Advanced Message Scheduler**\n\n"
+            "Choose scheduling type:",
+            reply_markup=menu_ui.schedule_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def schedule_instant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Instant schedule"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⚡ **Instant Send (Now or X seconds)**\n\n"
-        "Format:\n"
-        "`/sendnow <target> <message>`  → Send NOW\n"
-        "`/sendin <seconds> <target> <message>`  → Send in X seconds\n\n"
-        "Examples:\n"
-        "`/sendnow @user Hi!`  → Instant\n"
-        "`/sendin 30 @user Hello!`  → In 30 seconds\n\n"
-        "⚡ **ZERO delay execution!**",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "⚡ **Instant Send (Now or X seconds)**\n\n"
+            "Format:\n"
+            "`/sendnow <target> <message>`  → Send NOW\n"
+            "`/sendin <seconds> <target> <message>`  → Send in X seconds\n\n"
+            "Examples:\n"
+            "`/sendnow @user Hi!`  → Instant\n"
+            "`/sendin 30 @user Hello!`  → In 30 seconds\n\n"
+            "⚡ **ZERO delay execution!**",
+            parse_mode='Markdown',
+            reply_markup=menu_ui.back_button()
+        )
+    except BadRequest:
+        pass
 
 async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Time-based schedule"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏱️ **Time Schedule (HH:MM:SS)**\n\n"
-        "Format:\n"
-        "`/scheduleat <HH:MM:SS> <target> <message>`\n"
-        "`/scheduleat <HH:MM> <target> <message>`  (seconds = 00)\n\n"
-        "Examples:\n"
-        "`/scheduleat 14:30:00 @user Hello!`\n"
-        "`/scheduleat 09:15 @group Good morning!`\n\n"
-        "⏰ Executes at exact time (today or tomorrow)\n"
-        "⚡ **ZERO delay when time arrives!**",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "⏱️ **Time Schedule (HH:MM:SS)**\n\n"
+            "Format:\n"
+            "`/scheduleat <HH:MM:SS> <target> <message>`\n"
+            "`/scheduleat <HH:MM> <target> <message>`  (seconds = 00)\n\n"
+            "Examples:\n"
+            "`/scheduleat 14:30:00 @user Hello!`\n"
+            "`/scheduleat 09:15 @group Good morning!`\n\n"
+            "⏰ Executes at exact time (today or tomorrow)\n"
+            "⚡ **ZERO delay when time arrives!**",
+            parse_mode='Markdown',
+            reply_markup=menu_ui.back_button()
+        )
+    except BadRequest:
+        pass
 
 async def sendnow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send message NOW"""
@@ -316,16 +362,19 @@ async def my_schedules_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     schedules = await db.get_pending_schedules(user_id)
     
     if not schedules:
-        await update.callback_query.edit_message_text(
-            "📅 **My Schedules**\n\n"
-            "No pending schedules.",
-            reply_markup=menu_ui.back_button()
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                "📅 **My Schedules**\n\n"
+                "No pending schedules.",
+                reply_markup=menu_ui.back_button()
+            )
+        except BadRequest:
+            pass
         return
     
     text = "📅 **Pending Schedules**\n\n"
     
-    for sch in schedules:
+    for sch in schedules[:10]:  # Show max 10
         text += f"🆔 ID: {sch['id']}\n"
         text += f"📍 Target: {sch['target']}\n"
         text += f"⏰ Time: {sch['schedule_time']}\n"
@@ -333,26 +382,32 @@ async def my_schedules_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     text += "Use `/cancel <id>` to cancel a schedule."
     
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.back_button(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=menu_ui.back_button(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 # ============ ESCROW (ADVANCED) ============
 
 async def escrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Escrow main menu"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "💼 **Advanced Escrow System**\n\n"
-        "✨ **Auto-detection** in monitored groups\n"
-        "⚡ **Instant responses** from your account\n"
-        "🎛️ **Start/Stop** monitoring anytime\n\n"
-        "Choose an option:",
-        reply_markup=menu_ui.escrow_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "💼 **Advanced Escrow System**\n\n"
+            "✨ **Auto-detection** in monitored groups\n"
+            "⚡ **Instant responses** from your account\n"
+            "🎛️ **Start/Stop** monitoring anytime\n\n"
+            "Choose an option:",
+            reply_markup=menu_ui.escrow_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def addescrowgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add escrow monitoring group"""
@@ -389,7 +444,8 @@ async def addescrowgroup_command(update: Update, context: ContextTypes.DEFAULT_T
                 f"✅ **Escrow group added!**\n\n"
                 f"Group: {info.title}\n"
                 f"ID: `{info.id}`\n\n"
-                f"📡 Auto-detection is now **ACTIVE**",
+                f"📡 Auto-detection is now **ACTIVE**\n\n"
+                f"Send escrow forms in this group and I'll auto-reply!",
                 parse_mode='Markdown'
             )
         else:
@@ -403,12 +459,15 @@ async def addescrowgroup_command(update: Update, context: ContextTypes.DEFAULT_T
 async def multi_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Multi-account menu"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "👥 **Multi-Account Management**\n\n"
-        "Manage your Telegram accounts:",
-        reply_markup=menu_ui.multi_account_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "👥 **Multi-Account Management**\n\n"
+            "Manage your Telegram accounts:",
+            reply_markup=menu_ui.multi_account_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def view_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View all accounts"""
@@ -418,11 +477,14 @@ async def view_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TY
     accounts = await db.get_all_accounts(user_id)
     
     if not accounts:
-        await update.callback_query.edit_message_text(
-            "📋 **Your Accounts**\n\n"
-            "No accounts found. Add one to get started!",
-            reply_markup=menu_ui.multi_account_menu()
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                "📋 **Your Accounts**\n\n"
+                "No accounts found. Add one to get started!",
+                reply_markup=menu_ui.multi_account_menu()
+            )
+        except BadRequest:
+            pass
         return
     
     text = "📋 **Your Accounts**\n\n"
@@ -433,11 +495,14 @@ async def view_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     text += "\nUse `/switch <account_id>` to change active account."
     
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.multi_account_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=menu_ui.multi_account_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def switch_account_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Switch active account"""
@@ -459,25 +524,31 @@ async def switch_account_command(update: Update, context: ContextTypes.DEFAULT_T
 async def auto_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Auto-reply menu"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "🤖 **Auto Reply System**\n\n"
-        "Automatically reply to incoming messages:",
-        reply_markup=menu_ui.auto_reply_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "🤖 **Auto Reply System**\n\n"
+            "Automatically reply to incoming messages:",
+            reply_markup=menu_ui.auto_reply_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def add_auto_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add auto-reply rule"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "➕ **Add Auto-Reply Rule**\n\n"
-        "Format:\n"
-        "`/addreply <trigger> | <reply>`\n\n"
-        "Example:\n"
-        "`/addreply hello | Hi there!`",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "➕ **Add Auto-Reply Rule**\n\n"
+            "Format:\n"
+            "`/addreply <trigger> | <reply>`\n\n"
+            "Example:\n"
+            "`/addreply hello | Hi there!`",
+            parse_mode='Markdown',
+            reply_markup=menu_ui.back_button()
+        )
+    except BadRequest:
+        pass
 
 async def addreply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add auto-reply rule command"""
@@ -512,29 +583,34 @@ async def addreply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============ SCRAPER ============
-
 async def scraper_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Scraper menu"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "🔍 **Scraper Tools**\n\n"
-        "Extract data from Telegram:",
-        reply_markup=menu_ui.scraper_menu(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "🔍 **Scraper Tools**\n\n"
+            "Extract data from Telegram:",
+            reply_markup=menu_ui.scraper_menu(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 async def scrape_members_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Scrape group members"""
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "👥 **Scrape Group Members**\n\n"
-        "Format:\n"
-        "`/scrape <group_username> [limit]`\n\n"
-        "Example:\n"
-        "`/scrape @mygroup 500`",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            "👥 **Scrape Group Members**\n\n"
+            "Format:\n"
+            "`/scrape <group_username> [limit]`\n\n"
+            "Example:\n"
+            "`/scrape @mygroup 500`",
+            parse_mode='Markdown',
+            reply_markup=menu_ui.back_button()
+        )
+    except BadRequest:
+        pass
 
 async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Scrape group members command"""
@@ -592,11 +668,14 @@ async def analytics_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Active Accounts: {stats['active_accounts']}"
     )
     
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.back_button(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=menu_ui.back_button(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 # ============ SENT MESSAGES ============
 
@@ -608,11 +687,14 @@ async def sent_messages_handler(update: Update, context: ContextTypes.DEFAULT_TY
     messages = await db.get_sent_messages(user_id, limit=20)
     
     if not messages:
-        await update.callback_query.edit_message_text(
-            "📨 **Sent Messages**\n\n"
-            "No messages sent yet.",
-            reply_markup=menu_ui.back_button()
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                "📨 **Sent Messages**\n\n"
+                "No messages sent yet.",
+                reply_markup=menu_ui.back_button()
+            )
+        except BadRequest:
+            pass
         return
     
     text = "📨 **Recent Sent Messages**\n\n"
@@ -622,13 +704,17 @@ async def sent_messages_handler(update: Update, context: ContextTypes.DEFAULT_TY
         text += f"Message: {msg['message'][:50]}...\n"
         text += f"Time: {msg['sent_at']}\n\n"
     
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.back_button(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=menu_ui.back_button(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 # ============ STATUS ============
+
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show status"""
     await update.callback_query.answer()
@@ -655,11 +741,14 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = "❌ No active account. Please login first."
     
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.back_button(),
-        parse_mode='Markdown'
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=menu_ui.back_button(),
+            parse_mode='Markdown'
+        )
+    except BadRequest:
+        pass
 
 # ============ LOGOUT ============
 
@@ -674,20 +763,21 @@ async def logout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client_manager.remove_client(user_id, account['id'])
         await db.delete_account(account['id'], user_id)
         
-        await update.callback_query.edit_message_text(
-            "✅ Logged out successfully!",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔐 Login Again", callback_data="add_account")
-            ]])
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                "✅ Logged out successfully!",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔐 Login Again", callback_data="add_account")
+                ]])
+            )
+        except BadRequest:
+            pass
     else:
         await update.callback_query.edit_message_text("❌ No active account to logout.")
-# ============ MAIN APPLICATION ============
 
+# ============ MAIN APPLICATION ============
 async def post_init(application: Application):
     """Post-initialization tasks"""
-    import aiosqlite
-    
     # Initialize database
     await db.init_db()
     
@@ -706,6 +796,9 @@ def main():
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    
+    # Add error handler
+    application.add_error_handler(error_handler)
     
     # Login conversation handler
     login_conv = ConversationHandler(
@@ -751,7 +844,7 @@ def main():
     application.add_handler(CallbackQueryHandler(escrow_manager.toggle_monitoring_handler, pattern='^toggle_escrow_monitoring$'))
     application.add_handler(CallbackQueryHandler(escrow_manager.approve_escrow, pattern='^escrow_approve_'))
     application.add_handler(CallbackQueryHandler(escrow_manager.reject_escrow, pattern='^escrow_reject_'))
-    
+
     # Other handlers
     application.add_handler(CallbackQueryHandler(analytics_handler, pattern='^analytics$'))
     application.add_handler(CallbackQueryHandler(sent_messages_handler, pattern='^sent_messages$'))
