@@ -33,9 +33,11 @@ class AutoReplyHandler:
                         }
                     )
                     
-                    break  # Only reply once
+                    print(f"✅ Auto-reply sent for trigger '{trigger}' in chat {event.chat_id}")
+                    
+                    break  # Only reply once per message
         
         except Exception as e:
-            print(f"Auto-reply error: {e}")
+            print(f"❌ Auto-reply error: {e}")
 
 auto_reply_handler = AutoReplyHandler()
