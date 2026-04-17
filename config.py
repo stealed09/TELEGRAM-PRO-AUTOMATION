@@ -7,6 +7,9 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN')
 ADMIN_IDS = list(map(int, os.getenv('ADMIN_IDS', '').split(','))) if os.getenv('ADMIN_IDS') else []
 
+# Require admin to use bot
+REQUIRE_ADMIN = os.getenv('REQUIRE_ADMIN', 'True').lower() == 'true'
+
 # Database
 DB_NAME = 'automation.db'
 
@@ -15,5 +18,15 @@ SESSION_DIR = 'sessions/'
 os.makedirs(SESSION_DIR, exist_ok=True)
 
 # Escrow Configuration
-ESCROW_TIMEOUT = 3600  # 1 hour for replies
-ESCROW_GROUPS = []  # Will be populated from database
+ESCROW_TIMEOUT = 3600
+
+# Helper functions
+def is_admin(user_id):
+    """Check if user is admin"""
+    return user_id in ADMIN_IDS
+
+def check_admin_access(user_id):
+    """Check if user can access bot"""
+    if not REQUIRE_ADMIN:
+        return True
+    return is_admin(user_id)
