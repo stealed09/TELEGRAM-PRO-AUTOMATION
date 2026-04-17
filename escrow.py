@@ -132,7 +132,7 @@ class EscrowManager:
             return None
     
     async def setup_group_monitoring(self, user_id, account_id):
-        """Setup Telethon event handler for escrow form detection"""
+        """Setup Telethon event handler for escrow form detection IN GROUPS ONLY"""
         try:
             client = await client_manager.get_client(user_id, account_id)
             if not client:
@@ -149,6 +149,10 @@ class EscrowManager:
             @client.on(events.NewMessage())
             async def escrow_form_detector(event):
                 try:
+                    # ONLY PROCESS GROUP MESSAGES FOR ESCROW
+                    if not (event.is_group or event.is_channel):
+                        return
+                    
                     if not self.monitoring_active.get(user_id, True):
                         return
                     
@@ -168,7 +172,7 @@ class EscrowManager:
                     deal_data = self.parse_escrow_form(event.text)
                     
                     if deal_data:
-                        print(f"🎯 ESCROW FORM DETECTED")
+                        print(f"🎯 ESCROW FORM DETECTED in group")
                         await self.process_detected_form(
                             user_id, account_id, event.chat_id, deal_data, event.message.id
                         )
@@ -185,7 +189,7 @@ class EscrowManager:
             return False
     
     async def process_detected_form(self, user_id, account_id, chat_id, deal_data, original_msg_id):
-        """Process detected escrow form - Reply with simple BOTH AGREE message"""
+        """Process detected escrow form - Reply BOTH AGREE and TAG original message"""
         try:
             # Create escrow deal in database
             deal_id = await db.create_escrow_deal(
@@ -198,16 +202,17 @@ class EscrowManager:
             client = await client_manager.get_client(user_id, account_id)
             
             if client:
-                # Reply to the original message with simple text
+                # Reply to the original message with simple text and TAG
                 simple_reply = "🤝 𝐁𝐎𝐓𝐇 𝐀𝐆𝐑𝐄𝐄 ✅"
                 
+                # Send message as reply to original (this tags/quotes the original message)
                 await client.send_message(
                     chat_id,
                     simple_reply,
                     reply_to=original_msg_id
                 )
                 
-                print(f"✅ Replied 'BOTH AGREE' to message {original_msg_id}")
+                print(f"✅ Replied 'BOTH AGREE' and tagged message {original_msg_id}")
                 
                 # Send notification to bot user with deal details
                 bot = Bot(token=BOT_TOKEN)
@@ -223,7 +228,7 @@ class EscrowManager:
                     f"• Buyer: {deal_data['buyer_id']}\n\n"
                     f"📋 Terms: {deal_data['terms']}\n"
                     f"🏦 Bank: {deal_data['buyer_bank']}\n\n"
-                    f"✅ Replied: 'BOTH AGREE' to the escrow form"
+                    f"✅ Replied: 'BOTH AGREE' with tagged message"
                 )
                 
                 await bot.send_message(
@@ -265,14 +270,17 @@ class EscrowManager:
         try:
             await update.callback_query.edit_message_text(
                 "➕ **Add Escrow Group**\n\n"
-                "Format: `/addescrowgroup <group>`\n\n"
+                "Send command:\n"
+                "`<group_username_or_id>`\n\n"
                 "Example:\n"
-                "`/addescrowgroup @mygroup`",
+                "`@mygroup`",
                 parse_mode='Markdown',
                 reply_markup=menu_ui.back_button()
             )
         except BadRequest:
             pass
+        
+        context.user_data['awaiting_escrow_group'] = True
     
     async def view_escrow_groups_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View monitored groups"""
@@ -288,7 +296,7 @@ class EscrowManager:
                 await update.callback_query.edit_message_text(
                     "📋 **Escrow Groups**\n\n"
                     "No groups added.\n\n"
-                    "Use: `/addescrowgroup @group`",
+                    "Click 'Add Group' to start.",
                     parse_mode='Markdown',
                     reply_markup=menu_ui.escrow_menu()
                 )
