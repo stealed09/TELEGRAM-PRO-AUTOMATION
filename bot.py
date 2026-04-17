@@ -551,8 +551,8 @@ async def post_init(application: Application):
     
     print("✅ Bot initialized successfully!")
 
-async def main():
-    """Main function"""
+def main():
+    """Main function - FIXED VERSION"""
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
@@ -567,10 +567,15 @@ async def main():
             OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_otp)],
             PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_password)],
         },
-        fallbacks=[CommandHandler('cancel', login_handler.cancel_login)]
+        fallbacks=[CommandHandler('cancel', login_handler.cancel_login)],
+        per_message=True
     )
     
     # Add handlers
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(login_conv)
+    
+    # Callback query handlers
     application.add_handler(CallbackQueryHandler(show_main_menu, pattern='^main_menu$'))
     application.add_handler(CallbackQueryHandler(send_message_handler, pattern='^send_message$'))
     application.add_handler(CallbackQueryHandler(multi_account_handler, pattern='^multi_account$'))
@@ -604,7 +609,7 @@ async def main():
     
     # Start bot
     print("🚀 Starting bot...")
-    await application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
