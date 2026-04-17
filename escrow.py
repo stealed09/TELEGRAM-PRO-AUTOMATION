@@ -12,17 +12,15 @@ class EscrowManager:
     def __init__(self):
         self.pending_forms = {}
         self.active_deals = {}
-        self.monitoring_active = {}  # {user_id: bool}
+        self.monitoring_active = {}
     
     def parse_escrow_form(self, text):
-        """Parse escrow form - handles special characters and any format"""
+        """Parse escrow form"""
         try:
             data = {}
-            
-            # Normalize text
             normalized_text = text.replace('●', '•').replace('○', '•')
             
-            # Deal type - REQUIRED
+            # Deal type
             patterns = [
                 r'[•●]\s*ᴅᴇᴀʟ\s+ᴏꜰ\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
                 r'DEAL\s+OF\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
@@ -36,7 +34,7 @@ class EscrowManager:
             if 'deal_type' not in data:
                 return None
             
-            # Amount - REQUIRED
+            # Amount
             patterns = [
                 r'[•●]\s*ᴛᴏᴛᴀʟ\s+ᴀᴍᴏᴜɴᴛ\s*[:\-]+\s*(\d+(?:\.\d+)?)',
                 r'TOTAL\s+AMOUNT\s*[:\-]+\s*(\d+(?:\.\d+)?)',
@@ -50,7 +48,7 @@ class EscrowManager:
             if 'amount' not in data:
                 return None
             
-            # Maximum time - REQUIRED
+            # Maximum time
             patterns = [
                 r'[•●]\s*ᴍᴀxɪᴍᴜᴍ\s+ᴛɪᴍᴇ\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
                 r'MAXIMUM\s+TIME\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
@@ -64,7 +62,7 @@ class EscrowManager:
             if 'max_time' not in data:
                 return None
             
-            # Terms - REQUIRED
+            # Terms
             patterns = [
                 r'[•●]\s*ᴛᴇʀᴍꜱ\s*&\s*ᴄᴏɴᴅɪᴛɪᴏɴ\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
                 r'TERMS\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
@@ -78,7 +76,7 @@ class EscrowManager:
             if 'terms' not in data:
                 return None
             
-            # Seller - REQUIRED
+            # Seller
             patterns = [
                 r'[•●]\s*[𝑺𝒔Ss]𝒆𝒍𝒍𝒆𝒓\s*[:\-\s]+(\+?\d+)',
                 r'Seller\s*[:\-\s]+(\+?\d+)',
@@ -92,7 +90,7 @@ class EscrowManager:
             if 'seller_id' not in data:
                 return None
             
-            # Buyer - REQUIRED
+            # Buyer
             patterns = [
                 r'[•●]\s*[𝑩𝒃Bb]𝒖𝒚𝒆𝒓\s*[:\-\s]+(\+?\d+)',
                 r'Buyer\s*[:\-\s]+(\+?\d+)',
@@ -106,7 +104,7 @@ class EscrowManager:
             if 'buyer_id' not in data:
                 return None
             
-            # Buyer bank - OPTIONAL
+            # Buyer bank
             patterns = [
                 r'[•●]\s*Buyer\s+Bank\s+Name\s*[:\-]+\s*(.+?)(?=\n|●|•|$)',
             ]
@@ -119,20 +117,19 @@ class EscrowManager:
             if 'buyer_bank' not in data:
                 data['buyer_bank'] = 'N/A'
             
-            # Validate all required fields
             required = ['deal_type', 'amount', 'max_time', 'terms', 'seller_id', 'buyer_id']
             if all(key in data and data[key] for key in required):
-                print(f"✅ Escrow form parsed: Deal={data['deal_type']}, Amount={data['amount']}")
+                print(f"✅ Escrow form parsed")
                 return data
             else:
                 return None
                 
         except Exception as e:
-            print(f"❌ Error parsing escrow form: {e}")
+            print(f"❌ Error parsing: {e}")
             return None
     
     async def setup_group_monitoring(self, user_id, account_id):
-        """Setup Telethon event handler for escrow form detection IN GROUPS ONLY"""
+        """Setup escrow monitoring for GROUPS ONLY"""
         try:
             client = await client_manager.get_client(user_id, account_id)
             if not client:
@@ -141,15 +138,15 @@ class EscrowManager:
             escrow_groups = await db.get_escrow_groups(user_id)
             
             if not escrow_groups:
-                print(f"ℹ️ No escrow groups configured for user {user_id}")
+                print(f"ℹ️ No escrow groups for user {user_id}")
                 return False
             
-            print(f"📡 Setting up escrow monitoring for user {user_id}")
+            print(f"📡 Setting up escrow monitoring")
             
             @client.on(events.NewMessage())
             async def escrow_form_detector(event):
                 try:
-                    # ONLY PROCESS GROUP MESSAGES FOR ESCROW
+                    # ONLY GROUPS
                     if not (event.is_group or event.is_channel):
                         return
                     
@@ -172,74 +169,70 @@ class EscrowManager:
                     deal_data = self.parse_escrow_form(event.text)
                     
                     if deal_data:
-                        print(f"🎯 ESCROW FORM DETECTED in group")
+                        print(f"🎯 ESCROW FORM DETECTED")
                         await self.process_detected_form(
                             user_id, account_id, event.chat_id, deal_data, event.message.id
                         )
                 
                 except Exception as e:
-                    print(f"❌ Error in form detector: {e}")
+                    print(f"❌ Error: {e}")
             
             self.monitoring_active[user_id] = True
-            print(f"✅ Escrow monitoring ACTIVE for user {user_id}")
+            print(f"✅ Escrow monitoring ACTIVE")
             return True
             
         except Exception as e:
-            print(f"❌ Error setting up monitoring: {e}")
+            print(f"❌ Setup error: {e}")
             return False
     
     async def process_detected_form(self, user_id, account_id, chat_id, deal_data, original_msg_id):
-        """Process detected escrow form - Reply BOTH AGREE and TAG original message"""
+        """Process form - Reply BOTH AGREE and TAG"""
         try:
-            # Create escrow deal in database
             deal_id = await db.create_escrow_deal(
                 user_id, account_id, chat_id, deal_data
             )
             
-            print(f"✅ Escrow deal #{deal_id} created")
+            print(f"✅ Deal #{deal_id} created")
             
-            # Get client to reply
             client = await client_manager.get_client(user_id, account_id)
             
             if client:
-                # Reply to the original message with simple text and TAG
+                # Reply with BOTH AGREE and TAG original message
                 simple_reply = "🤝 𝐁𝐎𝐓𝐇 𝐀𝐆𝐑𝐄𝐄 ✅"
                 
-                # Send message as reply to original (this tags/quotes the original message)
                 await client.send_message(
                     chat_id,
                     simple_reply,
                     reply_to=original_msg_id
                 )
                 
-                print(f"✅ Replied 'BOTH AGREE' and tagged message {original_msg_id}")
+                print(f"✅ Replied and tagged message")
                 
-                # Send notification to bot user with deal details
+                # Send notification to bot user
                 bot = Bot(token=BOT_TOKEN)
                 
-                notification_msg = (
-                    f"🔔 **ESCROW FORM DETECTED & REPLIED**\n\n"
+                notification = (
+                    f"🔔 **ESCROW DETECTED**\n\n"
                     f"Deal ID: #{deal_id}\n"
                     f"💰 Amount: {deal_data['amount']}\n"
                     f"⏰ Time: {deal_data['max_time']}\n"
                     f"📝 Type: {deal_data['deal_type']}\n\n"
-                    f"👥 **Parties:**\n"
+                    f"👥 Parties:\n"
                     f"• Seller: {deal_data['seller_id']}\n"
                     f"• Buyer: {deal_data['buyer_id']}\n\n"
                     f"📋 Terms: {deal_data['terms']}\n"
                     f"🏦 Bank: {deal_data['buyer_bank']}\n\n"
-                    f"✅ Replied: 'BOTH AGREE' with tagged message"
+                    f"✅ Replied: BOTH AGREE"
                 )
                 
                 await bot.send_message(
                     chat_id=user_id,
-                    text=notification_msg,
+                    text=notification,
                     parse_mode='Markdown'
                 )
                 
-                print(f"✅ Notification sent to user {user_id}")
+                print(f"✅ Notification sent")
                 
-                # Store active deal info
                 self.active_deals[deal_id] = {
                     'message_id': original_msg_id,
                     'chat_id': chat_id,
@@ -248,32 +241,27 @@ class EscrowManager:
                     'deal_data': deal_data
                 }
                 
-                await db.log_action(user_id, 'escrow_auto_detected', {'deal_id': deal_id})
+                await db.log_action(user_id, 'escrow_detected', {'deal_id': deal_id})
         
         except Exception as e:
-            print(f"❌ Error processing form: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Process error: {e}")
     
     async def toggle_monitoring(self, user_id, enable=True):
-        """Toggle escrow monitoring"""
+        """Toggle monitoring"""
         self.monitoring_active[user_id] = enable
-        status = "started" if enable else "stopped"
         await db.set_user_setting(user_id, 'escrow_monitoring', enable)
-        return status
+        return "started" if enable else "stopped"
     
     async def add_escrow_group_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Add group for monitoring"""
+        """Add escrow group"""
         from menu import menu_ui
         
         await update.callback_query.answer()
         try:
             await update.callback_query.edit_message_text(
                 "➕ **Add Escrow Group**\n\n"
-                "Send command:\n"
-                "`<group_username_or_id>`\n\n"
-                "Example:\n"
-                "`@mygroup`",
+                "Type the group username or ID:\n\n"
+                "Example: `@mygroup`",
                 parse_mode='Markdown',
                 reply_markup=menu_ui.back_button()
             )
@@ -283,7 +271,7 @@ class EscrowManager:
         context.user_data['awaiting_escrow_group'] = True
     
     async def view_escrow_groups_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """View monitored groups"""
+        """View groups"""
         from menu import menu_ui
         
         await update.callback_query.answer()
@@ -295,8 +283,7 @@ class EscrowManager:
             try:
                 await update.callback_query.edit_message_text(
                     "📋 **Escrow Groups**\n\n"
-                    "No groups added.\n\n"
-                    "Click 'Add Group' to start.",
+                    "No groups added.",
                     parse_mode='Markdown',
                     reply_markup=menu_ui.escrow_menu()
                 )
@@ -310,13 +297,13 @@ class EscrowManager:
             status = "🟢" if group['is_active'] else "🔴"
             text += f"{status} {group['group_name']}\n"
         
-        monitoring_status = self.monitoring_active.get(user_id, True)
-        text += f"\n📡 Status: {'✅ ON' if monitoring_status else '⏸️ OFF'}"
+        monitoring = self.monitoring_active.get(user_id, True)
+        text += f"\n📡 Status: {'✅ ON' if monitoring else '⏸️ OFF'}"
         
         keyboard = [
             [
                 InlineKeyboardButton(
-                    "⏸️ Stop" if monitoring_status else "▶️ Start",
+                    "⏸️ Stop" if monitoring else "▶️ Start",
                     callback_data="toggle_escrow_monitoring"
                 )
             ],
@@ -333,7 +320,7 @@ class EscrowManager:
             pass
     
     async def toggle_monitoring_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Toggle monitoring"""
+        """Toggle"""
         await update.callback_query.answer()
         user_id = update.effective_user.id
         
@@ -342,7 +329,7 @@ class EscrowManager:
         
         await self.toggle_monitoring(user_id, new_status)
         
-        text = f"{'✅ Monitoring ON' if new_status else '⏸️ Monitoring OFF'}"
+        text = f"{'✅ ON' if new_status else '⏸️ OFF'}"
         
         try:
             await update.callback_query.edit_message_text(
