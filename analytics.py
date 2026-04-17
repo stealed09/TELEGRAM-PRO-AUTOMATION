@@ -18,8 +18,12 @@ class Analytics:
     
     async def get_recent_activity(self, user_id, days=7):
         """Get recent activity for user"""
-        # This would query the analytics table
-        # Implementation depends on specific needs
-        pass
+        return await db.get_recent_actions(user_id, limit=100)
+    
+    async def get_daily_stats(self, user_id, days=7):
+        """Get daily message stats"""
+        # This would require more complex queries
+        # For now, return basic stats
+        return await self.get_user_stats(user_id)
 
 analytics = Analytics()
