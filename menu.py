@@ -3,7 +3,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 class MenuUI:
     
     @staticmethod
-    def main_menu():
+    def main_menu(is_admin=False):
         """Main menu"""
         keyboard = [
             [
@@ -27,7 +27,51 @@ class MenuUI:
                 InlineKeyboardButton("📈 Status", callback_data="status")
             ],
             [
-                InlineKeyboardButton("🚪 Logout", callback_data="logout")
+                InlineKeyboardButton("📢 Group Messages", callback_data="group_messages"),
+            ],
+        ]
+        
+        # Add admin panel for admins
+        if is_admin:
+            keyboard.append([
+                InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel")
+            ])
+        
+        keyboard.append([
+            InlineKeyboardButton("🚪 Logout", callback_data="logout")
+        ])
+        
+        return InlineKeyboardMarkup(keyboard)
+    
+    @staticmethod
+    def admin_panel_menu():
+        """Admin panel menu"""
+        keyboard = [
+            [
+                InlineKeyboardButton("👥 All Users", callback_data="admin_users"),
+                InlineKeyboardButton("📝 Requests", callback_data="admin_requests")
+            ],
+            [
+                InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+            ],
+            [
+                InlineKeyboardButton("« Back", callback_data="main_menu")
+            ]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+    
+    @staticmethod
+    def group_messages_menu():
+        """Group auto messages menu"""
+        keyboard = [
+            [
+                InlineKeyboardButton("➕ Add Group Message", callback_data="add_group_message"),
+            ],
+            [
+                InlineKeyboardButton("📋 My Group Messages", callback_data="view_group_messages"),
+            ],
+            [
+                InlineKeyboardButton("« Back", callback_data="main_menu")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
