@@ -21,7 +21,11 @@ class LoginHandler:
         await update.callback_query.edit_message_text(
             "🔐 **Account Login Process**\n\n"
             "Please enter your **API ID**:\n\n"
-            "Get it from: https://my.telegram.org",
+            "📍 Get it from: https://my.telegram.org\n\n"
+            "After logging in:\n"
+            "1. Go to 'API Development Tools'\n"
+            "2. Create an app\n"
+            "3. Copy your API ID",
             parse_mode='Markdown'
         )
         
@@ -55,7 +59,7 @@ class LoginHandler:
         
         await update.message.reply_text(
             "✅ API HASH received!\n\n"
-            "Now send your **Phone Number** (with country code):\n"
+            "Now send your **Phone Number** (with country code):\n\n"
             "Example: +1234567890",
             parse_mode='Markdown'
         )
@@ -82,7 +86,8 @@ class LoginHandler:
             
             await update.message.reply_text(
                 "📱 **OTP Sent!**\n\n"
-                "Please enter the OTP code you received:",
+                "Check your Telegram app for the verification code.\n\n"
+                "Please enter the OTP code:",
                 parse_mode='Markdown'
             )
             return OTP
@@ -90,14 +95,19 @@ class LoginHandler:
         except Exception as e:
             await update.message.reply_text(
                 f"❌ Error sending OTP: {str(e)}\n\n"
-                "Please restart the login process."
+                "Please check:\n"
+                "• API ID and Hash are correct\n"
+                "• Phone number includes country code\n\n"
+                "Use /start to restart."
             )
+            if user_id in self.temp_data:
+                del self.temp_data[user_id]
             return ConversationHandler.END
     
     async def receive_otp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Receive OTP and login"""
         user_id = update.effective_user.id
-        otp = update.message.text.strip().replace('-', '')
+        otp = update.message.text.strip().replace('-', '').replace(' ', '')
         
         try:
             client = self.temp_data[user_id]['temp_client']
@@ -112,11 +122,13 @@ class LoginHandler:
                 return ConversationHandler.END
                 
             except Exception as e:
-                if "Two-steps verification" in str(e) or "password" in str(e).lower():
+                error_msg = str(e).lower()
+                if "two-steps verification" in error_msg or "password" in error_msg:
                     # 2FA required
                     await update.message.reply_text(
                         "🔐 **2FA Enabled**\n\n"
-                        "Please enter your **2FA Password**:",
+                        "Your account has Two-Factor Authentication enabled.\n\n"
+                        "Please enter your **2FA Password** (Cloud Password):",
                         parse_mode='Markdown'
                     )
                     return PASSWORD
@@ -126,8 +138,16 @@ class LoginHandler:
         except Exception as e:
             await update.message.reply_text(
                 f"❌ Login failed: {str(e)}\n\n"
-                "Please restart the login process."
+                "Please check your OTP and try again.\n"
+                "Use /start to restart."
             )
+            if user_id in self.temp_data:
+                if 'temp_client' in self.temp_data[user_id]:
+                    try:
+                        await self.temp_data[user_id]['temp_client'].disconnect()
+                    except:
+                        pass
+                del self.temp_data[user_id]
             return ConversationHandler.END
     
     async def receive_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,8 +168,15 @@ class LoginHandler:
         except Exception as e:
             await update.message.reply_text(
                 f"❌ 2FA Password incorrect: {str(e)}\n\n"
-                "Please restart the login process."
+                "Please check your password and use /start to try again."
             )
+            if user_id in self.temp_data:
+                if 'temp_client' in self.temp_data[user_id]:
+                    try:
+                        await self.temp_data[user_id]['temp_client'].disconnect()
+                    except:
+                        pass
+                del self.temp_data[user_id]
             return ConversationHandler.END
     
     async def _save_session(self, user_id, client):
@@ -171,6 +198,10 @@ class LoginHandler:
             # Store in client manager
             await client_manager.create_client(user_id, account_id, api_id, api_hash, session_string)
             
+            # Setup escrow monitoring
+            from escrow import escrow_manager
+            await escrow_manager.setup_group_monitoring(user_id, account_id)
+            
             # Clean up temp data
             if user_id in self.temp_data:
                 del self.temp_data[user_id]
@@ -184,15 +215,28 @@ class LoginHandler:
                      f"👤 Name: {me.first_name}\n"
                      f"📱 Phone: {phone}\n"
                      f"🆔 ID: {me.id}\n\n"
-                     f"Your account is now active and ready to use!",
+                     f"Your account is now active!\n\n"
+                     f"🎯 All features enabled:\n"
+                     f"• ⚡ Instant messaging\n"
+                     f"• ⏰ Smart scheduler\n"
+                     f"• 💼 Auto escrow detection\n"
+                     f"• 🤖 Auto-reply system\n\n"
+                     f"Use /start to see the menu.",
                 parse_mode='Markdown'
             )
             
             # Log action
             await db.log_action(user_id, 'account_added', {'phone': phone})
             
+            print(f"✅ User {user_id} logged in successfully as {phone}")
+            
         except Exception as e:
-            print(f"Error saving session: {e}")
+            print(f"❌ Error saving session: {e}")
+            bot = Bot(token=BOT_TOKEN)
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"❌ Error saving session: {str(e)}\n\nPlease try again with /start"
+            )
     
     async def cancel_login(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Cancel login process"""
@@ -200,10 +244,13 @@ class LoginHandler:
         
         if user_id in self.temp_data:
             if 'temp_client' in self.temp_data[user_id]:
-                await self.temp_data[user_id]['temp_client'].disconnect()
+                try:
+                    await self.temp_data[user_id]['temp_client'].disconnect()
+                except:
+                    pass
             del self.temp_data[user_id]
         
-        await update.message.reply_text("❌ Login cancelled.")
+        await update.message.reply_text("❌ Login cancelled. Use /start to begin again.")
         return ConversationHandler.END
 
 login_handler = LoginHandler()
