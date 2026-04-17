@@ -23,8 +23,38 @@ from escrow import escrow_manager
 from auto_reply import auto_reply_handler
 from analytics import analytics
 
-# Global storage for user states
+# Global storage
 user_states = {}
+
+# ============ STARTUP ============
+
+async def auto_start_users():
+    """Auto-start monitoring for users who have auto-start enabled"""
+    try:
+        async with aiosqlite.connect(db.db_name) as database:
+            async with database.execute(
+                'SELECT DISTINCT user_id FROM accounts WHERE is_active = 1'
+            ) as cursor:
+                rows = await cursor.fetchall()
+                
+                for row in rows:
+                    user_id = row[0]
+                    account = await db.get_active_account(user_id)
+                    
+                    if account:
+                        # Reconnect client
+                        await client_manager.create_client(
+                            user_id, account['id'],
+                            account['api_id'], account['api_hash'],
+                            account['session_string']
+                        )
+                        
+                        # Setup escrow monitoring
+                        await escrow_manager.setup_group_monitoring(user_id, account['id'])
+                        
+                        print(f"✅ Auto-started user {user_id}")
+    except Exception as e:
+        print(f"Auto-start error: {e}")
 
 # ============ START & MAIN MENU ============
 
@@ -32,33 +62,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command"""
     user = update.effective_user
     
-    # Add user to database
     await db.add_user(user.id, user.username)
     
-    # Check if user has active account
     account = await db.get_active_account(user.id)
     
     if not account:
-        # No account - show login option
         keyboard = [[
             InlineKeyboardButton("🔐 Login Account", callback_data="add_account")
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            f"👋 **Welcome to Telegram Automation Bot!**\n\n"
+            f"👋 **Welcome to Advanced Telegram Automation Bot!**\n\n"
             f"Hello {user.first_name}!\n\n"
-            f"To get started, please login with your Telegram account.\n\n"
-            f"Click the button below to begin:",
+            f"✨ **Features:**\n"
+            f"• 💬 Instant messaging (0 delay)\n"
+            f"• ⏰ Smart scheduler (HH:MM:SS)\n"
+            f"• 💼 Auto escrow detection\n"
+            f"• 🤖 Auto-reply system\n"
+            f"• 🔍 Group scraper\n\n"
+            f"Click below to login:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
     else:
-        # Has account - show main menu
         await update.message.reply_text(
             f"👋 **Welcome Back, {user.first_name}!**\n\n"
             f"✅ Active Account: {account['phone']}\n\n"
-            f"Choose an action from the menu below:",
+            f"Choose an action:",
             reply_markup=menu_ui.main_menu(),
             parse_mode='Markdown'
         )
@@ -93,13 +124,14 @@ async def send_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle send message"""
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(
-        "💬 **Send Message**\n\n"
+        "💬 **Send Message (Instant)**\n\n"
         "Format:\n"
         "`/send <target> <message>`\n\n"
         "Examples:\n"
         "`/send @username Hello!`\n"
         "`/send 123456789 Hi there`\n"
-        "`/send -1001234567890 Group message`",
+        "`/send -1001234567890 Group message`\n\n"
+        "⚡ **Sends instantly with ZERO delay!**",
         parse_mode='Markdown',
         reply_markup=menu_ui.back_button()
     )
@@ -119,19 +151,252 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = context.args[0]
     message = ' '.join(context.args[1:])
     
-    # Send message
     result = await message_sender.send_message(user_id, target, message)
     
     if result['success']:
         await update.message.reply_text(
-            f"✅ Message sent successfully!\n\n"
+            f"✅ Message sent **INSTANTLY**!\n\n"
             f"Target: {target}\n"
-            f"Message ID: {result['message_id']}"
+            f"Message ID: {result['message_id']}",
+            parse_mode='Markdown'
         )
     else:
+        await update.message.reply_text(f"❌ Failed: {result['error']}")
+
+# ============ SCHEDULER (FIXED) ============
+
+async def schedule_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Schedule menu"""
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "⏰ **Advanced Message Scheduler**\n\n"
+        "Choose scheduling type:",
+        reply_markup=menu_ui.schedule_menu(),
+        parse_mode='Markdown'
+    )
+
+async def schedule_instant_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Instant schedule"""
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "⚡ **Instant Send (Now or X seconds)**\n\n"
+        "Format:\n"
+        "`/sendnow <target> <message>`  → Send NOW\n"
+        "`/sendin <seconds> <target> <message>`  → Send in X seconds\n\n"
+        "Examples:\n"
+        "`/sendnow @user Hi!`  → Instant\n"
+        "`/sendin 30 @user Hello!`  → In 30 seconds\n\n"
+        "⚡ **ZERO delay execution!**",
+        parse_mode='Markdown',
+        reply_markup=menu_ui.back_button()
+    )
+
+async def schedule_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Time-based schedule"""
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "⏱️ **Time Schedule (HH:MM:SS)**\n\n"
+        "Format:\n"
+        "`/scheduleat <HH:MM:SS> <target> <message>`\n"
+        "`/scheduleat <HH:MM> <target> <message>`  (seconds = 00)\n\n"
+        "Examples:\n"
+        "`/scheduleat 14:30:00 @user Hello!`\n"
+        "`/scheduleat 09:15 @group Good morning!`\n\n"
+        "⏰ Executes at exact time (today or tomorrow)\n"
+        "⚡ **ZERO delay when time arrives!**",
+        parse_mode='Markdown',
+        reply_markup=menu_ui.back_button()
+    )
+
+async def sendnow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send message NOW"""
+    user_id = update.effective_user.id
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: `/sendnow <target> <message>`", parse_mode='Markdown')
+        return
+    
+    target = context.args[0]
+    message = ' '.join(context.args[1:])
+    
+    account = await db.get_active_account(user_id)
+    if not account:
+        await update.message.reply_text("❌ No active account.")
+        return
+    
+    result = await scheduler_manager.add_instant_schedule(
+        user_id, account['id'], target, message, 0
+    )
+    
+    if result['success']:
         await update.message.reply_text(
-            f"❌ Failed to send message:\n{result['error']}"
+            f"⚡ **Queued for INSTANT execution!**\n\n"
+            f"Schedule ID: {result['schedule_id']}\n"
+            f"Target: {target}\n"
+            f"Executes: **NOW** (within 1 second)",
+            parse_mode='Markdown'
         )
+
+async def sendin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send message in X seconds"""
+    user_id = update.effective_user.id
+    
+    if len(context.args) < 3:
+        await update.message.reply_text("Usage: `/sendin <seconds> <target> <message>`", parse_mode='Markdown')
+        return
+    
+    try:
+        delay = int(context.args[0])
+        target = context.args[1]
+        message = ' '.join(context.args[2:])
+        
+        account = await db.get_active_account(user_id)
+        if not account:
+            await update.message.reply_text("❌ No active account.")
+            return
+        
+        result = await scheduler_manager.add_instant_schedule(
+            user_id, account['id'], target, message, delay
+        )
+        
+        if result['success']:
+            await update.message.reply_text(
+                f"⏰ **Scheduled!**\n\n"
+                f"Schedule ID: {result['schedule_id']}\n"
+                f"Target: {target}\n"
+                f"Executes in: **{delay} seconds**\n"
+                f"Exact time: {result['scheduled_for']}",
+                parse_mode='Markdown'
+            )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid delay. Must be a number.")
+
+async def scheduleat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Schedule at specific time (HH:MM:SS)"""
+    user_id = update.effective_user.id
+    
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "Usage: `/scheduleat <HH:MM:SS> <target> <message>`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    time_str = context.args[0]
+    target = context.args[1]
+    message = ' '.join(context.args[2:])
+    
+    account = await db.get_active_account(user_id)
+    if not account:
+        await update.message.reply_text("❌ No active account.")
+        return
+    
+    result = await scheduler_manager.add_time_schedule(
+        user_id, account['id'], target, message, time_str
+    )
+    
+    if result['success']:
+        await update.message.reply_text(
+            f"✅ **Scheduled!**\n\n"
+            f"Schedule ID: {result['schedule_id']}\n"
+            f"Target: {target}\n"
+            f"Time: {time_str}\n"
+            f"Executes at: {result['scheduled_for']}\n\n"
+            f"⚡ Will execute with **ZERO delay** at exact time!",
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(f"❌ Error: {result['error']}")
+
+async def my_schedules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View scheduled messages"""
+    await update.callback_query.answer()
+    user_id = update.effective_user.id
+    
+    schedules = await db.get_pending_schedules(user_id)
+    
+    if not schedules:
+        await update.callback_query.edit_message_text(
+            "📅 **My Schedules**\n\n"
+            "No pending schedules.",
+            reply_markup=menu_ui.back_button()
+        )
+        return
+    
+    text = "📅 **Pending Schedules**\n\n"
+    
+    for sch in schedules:
+        text += f"🆔 ID: {sch['id']}\n"
+        text += f"📍 Target: {sch['target']}\n"
+        text += f"⏰ Time: {sch['schedule_time']}\n"
+        text += f"💬 Message: {sch['message'][:40]}...\n\n"
+    
+    text += "Use `/cancel <id>` to cancel a schedule."
+    
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=menu_ui.back_button(),
+        parse_mode='Markdown'
+    )
+
+# ============ ESCROW (ADVANCED) ============
+
+async def escrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Escrow main menu"""
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "💼 **Advanced Escrow System**\n\n"
+        "✨ **Auto-detection** in monitored groups\n"
+        "⚡ **Instant responses** from your account\n"
+        "🎛️ **Start/Stop** monitoring anytime\n\n"
+        "Choose an option:",
+        reply_markup=menu_ui.escrow_menu(),
+        parse_mode='Markdown'
+    )
+
+async def addescrowgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add escrow monitoring group"""
+    user_id = update.effective_user.id
+    
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "Usage: `/addescrowgroup <group_id_or_username>`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    group_identifier = context.args[0]
+    
+    account = await db.get_active_account(user_id)
+    if not account:
+        await update.message.reply_text("❌ No active account.")
+        return
+    
+    try:
+        # Get group info
+        info = await message_sender.get_chat_info(user_id, group_identifier, account['id'])
+        
+        if info:
+            # Add to database
+            await db.add_escrow_group(
+                user_id, account['id'], info.id, info.title or group_identifier
+            )
+            
+            # Setup monitoring
+            await escrow_manager.setup_group_monitoring(user_id, account['id'])
+            
+            await update.message.reply_text(
+                f"✅ **Escrow group added!**\n\n"
+                f"Group: {info.title}\n"
+                f"ID: `{info.id}`\n\n"
+                f"📡 Auto-detection is now **ACTIVE**",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Could not find group. Make sure you're a member.")
+    
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 # ============ MULTI-ACCOUNT ============
 
@@ -188,104 +453,6 @@ async def switch_account_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"✅ Switched to account ID: {account_id}")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
-
-# ============ SCHEDULER ============
-
-async def schedule_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Schedule menu"""
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏰ **Message Scheduler**\n\n"
-        "Schedule messages to be sent automatically:",
-        reply_markup=menu_ui.schedule_menu(),
-        parse_mode='Markdown'
-    )
-
-async def schedule_onetime_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """One-time schedule"""
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏱️ **One-Time Schedule**\n\n"
-        "Format:\n"
-        "`/schedule <target> <datetime> <message>`\n\n"
-        "Example:\n"
-        "`/schedule @username 2024-01-15 14:30 Hello!`\n\n"
-        "Datetime format: YYYY-MM-DD HH:MM",
-        parse_mode='Markdown',
-        reply_markup=menu_ui.back_button()
-    )
-
-async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Schedule message command"""
-    user_id = update.effective_user.id
-    
-    if len(context.args) < 4:
-        await update.message.reply_text(
-            "❌ Invalid format.\n\n"
-            "Use: `/schedule <target> <date> <time> <message>`",
-            parse_mode='Markdown'
-        )
-        return
-    
-    target = context.args[0]
-    date_str = context.args[1]
-    time_str = context.args[2]
-    message = ' '.join(context.args[3:])
-    
-    try:
-        from datetime import datetime
-        schedule_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        
-        account = await db.get_active_account(user_id)
-        if not account:
-            await update.message.reply_text("❌ No active account.")
-            return
-        
-        schedule_id = await scheduler_manager.add_one_time_schedule(
-            user_id, account['id'], target, message, schedule_time
-        )
-        
-        await update.message.reply_text(
-            f"✅ Message scheduled!\n\n"
-            f"Schedule ID: {schedule_id}\n"
-            f"Target: {target}\n"
-            f"Time: {schedule_time}\n"
-            f"Message: {message}"
-        )
-        
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-
-async def my_schedules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View scheduled messages"""
-    await update.callback_query.answer()
-    user_id = update.effective_user.id
-    
-    schedules = await db.get_pending_schedules(user_id)
-    
-    if not schedules:
-        await update.callback_query.edit_message_text(
-            "📅 **My Schedules**\n\n"
-            "No pending schedules.",
-            reply_markup=menu_ui.back_button()
-        )
-        return
-    
-    text = "📅 **My Schedules**\n\n"
-    
-    for sch in schedules:
-        text += f"ID: {sch['id']}\n"
-        text += f"Target: {sch['target']}\n"
-        text += f"Time: {sch['schedule_time']}\n"
-        text += f"Message: {sch['message'][:50]}...\n\n"
-    
-    text += "Use `/delschedule <id>` to delete a schedule."
-    
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=menu_ui.back_button(),
-        parse_mode='Markdown'
-    )
 
 # ============ AUTO REPLY ============
 
@@ -388,7 +555,6 @@ async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await scraper.scrape_group_members(user_id, group, limit)
     
     if result['success']:
-        # Create CSV file
         import csv
         import io
         
@@ -406,17 +572,6 @@ async def scrape_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(f"❌ Error: {result['error']}")
-
-# ============ ESCROW ============
-
-async def escrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Escrow system"""
-    await escrow_manager.start_escrow_process(update, context)
-
-async def escrow_form_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle escrow form submission"""
-    if context.user_data.get('awaiting_escrow_form'):
-        await escrow_manager.process_escrow_form(update, context)
 
 # ============ ANALYTICS ============
 
@@ -474,7 +629,6 @@ async def sent_messages_handler(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 # ============ STATUS ============
-
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show status"""
     await update.callback_query.answer()
@@ -486,12 +640,17 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         client = await client_manager.get_client(user_id, account['id'])
         is_connected = client.is_connected() if client else False
         
+        escrow_status = escrow_manager.monitoring_active.get(user_id, False)
+        scheduler_status = scheduler_manager.is_running
+        
         text = (
             f"📈 **System Status**\n\n"
             f"✅ Active Account: {account['phone']}\n"
             f"{'🟢' if is_connected else '🔴'} Connection: {'Active' if is_connected else 'Disconnected'}\n"
             f"🆔 Account ID: {account['id']}\n\n"
-            f"Everything is working properly!"
+            f"📡 Escrow Monitoring: {'✅ ON' if escrow_status else '⏸️ OFF'}\n"
+            f"⏰ Scheduler: {'✅ Running (1s check)' if scheduler_status else '❌ Stopped'}\n\n"
+            f"🚀 All systems operational!"
         )
     else:
         text = "❌ No active account. Please login first."
@@ -523,53 +682,43 @@ async def logout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.callback_query.edit_message_text("❌ No active account to logout.")
-
-# ============ TELETHON EVENT HANDLERS ============
-
-async def setup_userbot_handlers(user_id, account_id, client):
-    """Setup event handlers for userbot"""
-    
-    @client.on(events.NewMessage(incoming=True))
-    async def handle_incoming(event):
-        # Auto-reply handler
-        await auto_reply_handler.handle_incoming_message(event, user_id, account_id)
-        
-        # Escrow reply handler
-        await escrow_manager.handle_escrow_reply(event)
-    
-    print(f"Userbot handlers setup for user {user_id}, account {account_id}")
-
 # ============ MAIN APPLICATION ============
 
 async def post_init(application: Application):
     """Post-initialization tasks"""
+    import aiosqlite
+    
     # Initialize database
     await db.init_db()
     
-    # Start scheduler
+    # Start scheduler (checking every SECOND)
     scheduler_manager.start_scheduler_job()
     
+    # Auto-start users
+    await auto_start_users()
+    
     print("✅ Bot initialized successfully!")
+    print("⏰ Scheduler running (1-second interval)")
+    print("📡 Auto-start complete")
 
 def main():
-    """Main function - FIXED VERSION"""
+    """Main function"""
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     
     # Login conversation handler
     login_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(login_handler.start_login, pattern='^add_account$')],
-    states={
-        API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_id)],
-        API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_hash)],
-        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_phone)],
-        OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_otp)],
-        PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_password)],
-    },
-    fallbacks=[CommandHandler('cancel', login_handler.cancel_login)]
+        entry_points=[CallbackQueryHandler(login_handler.start_login, pattern='^add_account$')],
+        states={
+            API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_id)],
+            API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_hash)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_phone)],
+            OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_otp)],
+            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_password)],
+        },
+        fallbacks=[CommandHandler('cancel', login_handler.cancel_login)]
     )
-    
     
     # Add handlers
     application.add_handler(CommandHandler('start', start))
@@ -580,35 +729,47 @@ def main():
     application.add_handler(CallbackQueryHandler(send_message_handler, pattern='^send_message$'))
     application.add_handler(CallbackQueryHandler(multi_account_handler, pattern='^multi_account$'))
     application.add_handler(CallbackQueryHandler(view_accounts_handler, pattern='^view_accounts$'))
+    
+    # Scheduler handlers
     application.add_handler(CallbackQueryHandler(schedule_handler, pattern='^schedule$'))
-    application.add_handler(CallbackQueryHandler(schedule_onetime_handler, pattern='^schedule_onetime$'))
+    application.add_handler(CallbackQueryHandler(schedule_instant_handler, pattern='^schedule_instant$'))
+    application.add_handler(CallbackQueryHandler(schedule_time_handler, pattern='^schedule_time$'))
     application.add_handler(CallbackQueryHandler(my_schedules_handler, pattern='^my_schedules$'))
+    
+    # Auto-reply handlers
     application.add_handler(CallbackQueryHandler(auto_reply_handler, pattern='^auto_reply$'))
     application.add_handler(CallbackQueryHandler(add_auto_reply_handler, pattern='^add_auto_reply$'))
+    
+    # Scraper handlers
     application.add_handler(CallbackQueryHandler(scraper_handler, pattern='^scraper$'))
     application.add_handler(CallbackQueryHandler(scrape_members_handler, pattern='^scrape_members$'))
+    
+    # Escrow handlers
     application.add_handler(CallbackQueryHandler(escrow_handler, pattern='^escrow$'))
+    application.add_handler(CallbackQueryHandler(escrow_manager.add_escrow_group_handler, pattern='^add_escrow_group$'))
+    application.add_handler(CallbackQueryHandler(escrow_manager.view_escrow_groups_handler, pattern='^view_escrow_groups$'))
+    application.add_handler(CallbackQueryHandler(escrow_manager.toggle_monitoring_handler, pattern='^toggle_escrow_monitoring$'))
+    application.add_handler(CallbackQueryHandler(escrow_manager.approve_escrow, pattern='^escrow_approve_'))
+    application.add_handler(CallbackQueryHandler(escrow_manager.reject_escrow, pattern='^escrow_reject_'))
+    
+    # Other handlers
     application.add_handler(CallbackQueryHandler(analytics_handler, pattern='^analytics$'))
     application.add_handler(CallbackQueryHandler(sent_messages_handler, pattern='^sent_messages$'))
     application.add_handler(CallbackQueryHandler(status_handler, pattern='^status$'))
     application.add_handler(CallbackQueryHandler(logout_handler, pattern='^logout$'))
     
-    # Escrow admin handlers
-    application.add_handler(CallbackQueryHandler(escrow_manager.approve_escrow, pattern='^escrow_approve_'))
-    application.add_handler(CallbackQueryHandler(escrow_manager.reject_escrow, pattern='^escrow_reject_'))
-    
     # Command handlers
     application.add_handler(CommandHandler('send', send_command))
+    application.add_handler(CommandHandler('sendnow', sendnow_command))
+    application.add_handler(CommandHandler('sendin', sendin_command))
+    application.add_handler(CommandHandler('scheduleat', scheduleat_command))
     application.add_handler(CommandHandler('switch', switch_account_command))
-    application.add_handler(CommandHandler('schedule', schedule_command))
     application.add_handler(CommandHandler('addreply', addreply_command))
     application.add_handler(CommandHandler('scrape', scrape_command))
-    
-    # Message handler for escrow forms
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, escrow_form_handler))
+    application.add_handler(CommandHandler('addescrowgroup', addescrowgroup_command))
     
     # Start bot
-    print("🚀 Starting bot...")
+    print("🚀 Starting Advanced Telegram Automation Bot...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
