@@ -559,17 +559,17 @@ def main():
     
     # Login conversation handler
     login_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(login_handler.start_login, pattern='^add_account$')],
-        states={
-            API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_id)],
-            API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_hash)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_phone)],
-            OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_otp)],
-            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_password)],
-        },
-        fallbacks=[CommandHandler('cancel', login_handler.cancel_login)],
-        per_message=True
+    entry_points=[CallbackQueryHandler(login_handler.start_login, pattern='^add_account$')],
+    states={
+        API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_id)],
+        API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_api_hash)],
+        PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_phone)],
+        OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_otp)],
+        PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, login_handler.receive_password)],
+    },
+    fallbacks=[CommandHandler('cancel', login_handler.cancel_login)]
     )
+    
     
     # Add handlers
     application.add_handler(CommandHandler('start', start))
