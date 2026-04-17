@@ -16,3 +16,4 @@ os.makedirs(SESSION_DIR, exist_ok=True)
 
 # Escrow Configuration
 ESCROW_TIMEOUT = 3600  # 1 hour for replies
+ESCROW_GROUPS = []  # Will be populated from database
