@@ -1,10 +1,11 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+
 class MenuUI:
-    
+
     @staticmethod
     def main_menu(is_admin=False):
-        """Main menu"""
+        """Main menu — admin panel button shown only for admins"""
         keyboard = [
             [
                 InlineKeyboardButton("💬 Send Message", callback_data="send_message"),
@@ -30,52 +31,49 @@ class MenuUI:
                 InlineKeyboardButton("📢 Group Messages", callback_data="group_messages"),
             ],
         ]
-        
-        # Add admin panel for admins
+
         if is_admin:
             keyboard.append([
                 InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel")
             ])
-        
+
         keyboard.append([
             InlineKeyboardButton("🚪 Logout", callback_data="logout")
         ])
-        
+
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def admin_panel_menu():
         """Admin panel menu"""
         keyboard = [
             [
-                InlineKeyboardButton("👥 All Users", callback_data="admin_users"),
-                InlineKeyboardButton("📝 Requests", callback_data="admin_requests")
+                InlineKeyboardButton("👥 All Users & Accounts", callback_data="admin_users"),
+                InlineKeyboardButton("📝 Access Requests", callback_data="admin_requests")
             ],
             [
-                InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+                InlineKeyboardButton("📢 Broadcast (All)", callback_data="admin_broadcast_all"),
+                InlineKeyboardButton("📢 Broadcast (Approved)", callback_data="admin_broadcast_approved"),
+            ],
+            [
+                InlineKeyboardButton("📢 Broadcast (Unapproved)", callback_data="admin_broadcast_unapproved"),
             ],
             [
                 InlineKeyboardButton("« Back", callback_data="main_menu")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def group_messages_menu():
         """Group auto messages menu"""
         keyboard = [
-            [
-                InlineKeyboardButton("➕ Add Group Message", callback_data="add_group_message"),
-            ],
-            [
-                InlineKeyboardButton("📋 My Group Messages", callback_data="view_group_messages"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("➕ Add Group Message", callback_data="add_group_message")],
+            [InlineKeyboardButton("📋 My Group Messages", callback_data="view_group_messages")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def multi_account_menu():
         """Multi-account menu"""
@@ -84,57 +82,39 @@ class MenuUI:
                 InlineKeyboardButton("➕ Add Account", callback_data="add_account"),
                 InlineKeyboardButton("📋 View Accounts", callback_data="view_accounts")
             ],
-            [
-                InlineKeyboardButton("🔄 Switch Account", callback_data="switch_account"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("🔄 Switch Account", callback_data="switch_account")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def scraper_menu():
         """Scraper menu"""
         keyboard = [
-            [
-                InlineKeyboardButton("👥 Scrape Members", callback_data="scrape_members"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("👥 Scrape Members", callback_data="scrape_members")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def schedule_menu():
         """Schedule menu"""
         keyboard = [
-            [
-                InlineKeyboardButton("⏱️ Schedule Time (HH:MM:SS)", callback_data="schedule_time"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("⏱️ Schedule Time (HH:MM:SS)", callback_data="schedule_time")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def auto_reply_menu():
         """Auto-reply menu"""
         keyboard = [
-            [
-                InlineKeyboardButton("➕ Set Message", callback_data="set_auto_reply"),
-            ],
-            [
-                InlineKeyboardButton("🗑️ Remove", callback_data="delete_auto_reply"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("➕ Set Message", callback_data="set_auto_reply")],
+            [InlineKeyboardButton("🗑️ Remove", callback_data="delete_auto_reply")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def escrow_menu():
         """Escrow menu"""
@@ -143,20 +123,17 @@ class MenuUI:
                 InlineKeyboardButton("➕ Add Group", callback_data="add_escrow_group"),
                 InlineKeyboardButton("📋 View Groups", callback_data="view_escrow_groups")
             ],
-            [
-                InlineKeyboardButton("⏸️ Toggle", callback_data="toggle_escrow_monitoring"),
-            ],
-            [
-                InlineKeyboardButton("« Back", callback_data="main_menu")
-            ]
+            [InlineKeyboardButton("⏸️ Toggle Monitoring", callback_data="toggle_escrow_monitoring")],
+            [InlineKeyboardButton("« Back", callback_data="main_menu")]
         ]
         return InlineKeyboardMarkup(keyboard)
-    
+
     @staticmethod
     def back_button():
-        """Back button"""
+        """Back to main menu button"""
         return InlineKeyboardMarkup([[
             InlineKeyboardButton("« Back to Menu", callback_data="main_menu")
         ]])
+
 
 menu_ui = MenuUI()
