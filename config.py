@@ -7,7 +7,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN')
 ADMIN_IDS = list(map(int, os.getenv('ADMIN_IDS', '').split(','))) if os.getenv('ADMIN_IDS') else []
 
-# Require admin to use bot
+# Require admin approval to use bot
 REQUIRE_ADMIN = os.getenv('REQUIRE_ADMIN', 'True').lower() == 'true'
 
 # Database
@@ -26,7 +26,10 @@ def is_admin(user_id):
     return user_id in ADMIN_IDS
 
 def check_admin_access(user_id):
-    """Check if user can access bot"""
+    """Check if user can access bot (admin bypasses approval requirement)"""
+    if is_admin(user_id):
+        return True
     if not REQUIRE_ADMIN:
         return True
-    return is_admin(user_id)
+    return False
+    
