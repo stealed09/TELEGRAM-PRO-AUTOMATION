@@ -17,105 +17,109 @@ class EscrowManager:
         self.active_deals = {}
         self.monitoring_active = {}
 
+    def _normalize_label(self, raw: str) -> str:
+        """
+        Convert any Unicode bold/italic math letters to plain ASCII,
+        then lowercase and strip spaces so we can keyword-match reliably.
+
+        Unicode math italic block: U+1D400–U+1D7FF
+        We map each character back to its ASCII base via unicodedata.
+        """
+        import unicodedata
+        result = []
+        for ch in raw:
+            # Decompose then keep only ASCII letters/digits/spaces
+            normalized = unicodedata.normalize('NFKD', ch)
+            ascii_chars = normalized.encode('ascii', 'ignore').decode('ascii')
+            result.append(ascii_chars if ascii_chars else ch)
+        return ''.join(result).lower().strip()
+
     def parse_escrow_form(self, text):
         """
-        Parse the new Boss Escrow Deal form.
-        Fields:
-          Deal Description, Name of paying, Total Deal Amount,
-          Time To Finish, Refund Condition, Release Condition,
-          Seller, Buyer
+        Line-based parser for the Boss Escrow Deal form.
+        Strategy:
+          1. Split text into lines.
+          2. For lines containing ' : ', strip the bullet/unicode label,
+             normalise it to plain ASCII lowercase, then keyword-match.
+          3. The value is everything after the first ' : ' on that line.
         Returns dict or None if any required field is blank/missing.
         """
         try:
+            # Quick check — must look like a Boss Escrow form
+            if 'Escrow' not in text and 'escrow' not in text.lower():
+                return None
+
             data = {}
 
-            # Helper: extract value after a label, handles bold/italic unicode chars
-            def extract_field(label_pattern, txt):
-                pattern = label_pattern + r'\s*:\s*(.+?)(?=\n|$)'
-                match = re.search(pattern, txt, re.IGNORECASE | re.MULTILINE)
-                if match:
-                    value = match.group(1).strip()
-                    return value if value else None
-                return None
+            for line in text.splitlines():
+                # Only process lines that contain a colon separator
+                if ':' not in line:
+                    continue
 
-            # Normalise text: strip zero-width chars, convert fancy unicode bullets
-            clean = text.replace('\u200b', '').replace('\u200c', '').replace('\u200d', '')
+                # Split on FIRST colon only
+                colon_idx = line.index(':')
+                raw_label = line[:colon_idx]
+                raw_value = line[colon_idx + 1:].strip()
 
-            # ---- Deal Description ----
-            v = extract_field(r'[\•\•\•\-\*]?\s*[\U0001D400-\U0001D7FF\w\s]*[Dd]eal\s+[Dd]escription', clean)
-            if not v:
-                v = extract_field(r'Deal\s+Description', clean)
-            data['deal_description'] = v
+                # Skip empty values — we will validate later
+                label = self._normalize_label(raw_label)
 
-            # ---- Name of paying ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Nn]ame\s+of\s+[Pp]ay(?:ing)?', clean)
-            if not v:
-                v = extract_field(r'Name\s+of\s+pay', clean)
-            data['paying_name'] = v
+                # Match keywords in the normalised label
+                if 'deal' in label and 'description' in label:
+                    data['deal_description'] = raw_value
 
-            # ---- Total Deal Amount ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Tt]otal\s+[Dd]eal\s+[Aa]mount', clean)
-            if not v:
-                v = extract_field(r'Total\s+Deal\s+Amount', clean)
-            # Try to parse as number, keep raw string otherwise
-            if v:
-                try:
-                    data['amount'] = float(re.sub(r'[^\d.]', '', v))
-                except Exception:
-                    data['amount'] = 0.0
-                data['amount_raw'] = v
-            else:
-                data['amount'] = None
+                elif 'name' in label and 'pay' in label:
+                    data['paying_name'] = raw_value
 
-            # ---- Time To Finish ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Tt]ime\s+[Tt]o\s+[Ff]inish', clean)
-            if not v:
-                v = extract_field(r'Time\s+To\s+Finish', clean)
-            data['time_to_finish'] = v
+                elif 'total' in label and 'amount' in label:
+                    data['amount_raw'] = raw_value
+                    try:
+                        numeric = re.sub(r'[^\d.]', '', raw_value)
+                        data['amount'] = float(numeric) if numeric else 0.0
+                    except Exception:
+                        data['amount'] = 0.0
 
-            # ---- Refund Condition ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Rr]efund\s+[Cc]ondition', clean)
-            if not v:
-                v = extract_field(r'Refund\s+Condition', clean)
-            data['refund_condition'] = v
+                elif 'time' in label and 'finish' in label:
+                    data['time_to_finish'] = raw_value
 
-            # ---- Release Condition ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Rr]elease\s+[Cc]ondition', clean)
-            if not v:
-                v = extract_field(r'Release\s+Condition', clean)
-            data['release_condition'] = v
+                elif 'refund' in label and 'condition' in label:
+                    data['refund_condition'] = raw_value
 
-            # ---- Seller ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Ss]eller', clean)
-            if not v:
-                v = extract_field(r'Seller', clean)
-            data['seller'] = v
+                elif 'release' in label and 'condition' in label:
+                    data['release_condition'] = raw_value
 
-            # ---- Buyer ----
-            v = extract_field(r'[\U0001D400-\U0001D7FF\w\s]*[Bb]uyer', clean)
-            if not v:
-                v = extract_field(r'Buyer', clean)
-            data['buyer'] = v
+                elif 'seller' in label and 'buyer' not in label:
+                    # Avoid matching "buyer" line on the seller check
+                    data['seller'] = raw_value
+
+                elif 'buyer' in label and 'seller' not in label:
+                    data['buyer'] = raw_value
 
             # ---- Validate: ALL fields must be non-empty ----
-            required = [
-                'deal_description', 'paying_name', 'time_to_finish',
-                'refund_condition', 'release_condition', 'seller', 'buyer'
-            ]
+            required = {
+                'deal_description': 'Deal Description',
+                'paying_name':      'Name of paying',
+                'time_to_finish':   'Time To Finish',
+                'refund_condition': 'Refund Condition',
+                'release_condition':'Release Condition',
+                'seller':           'Seller',
+                'buyer':            'Buyer',
+            }
+
             missing = []
-            for key in required:
-                val = data.get(key)
+            for key, friendly in required.items():
+                val = data.get(key, '')
                 if not val or str(val).strip() == '':
-                    missing.append(key)
+                    missing.append(friendly)
 
             if data.get('amount') is None:
-                missing.append('amount')
+                missing.append('Total Deal Amount')
 
             if missing:
-                print(f"⚠️ Escrow form missing/blank fields: {missing}")
+                print(f"⚠️ Escrow form has blank/missing fields: {missing}")
                 return None
 
-            print(f"✅ Escrow form fully parsed: {data}")
+            print(f"✅ Boss Escrow form parsed OK: {data}")
             return data
 
         except Exception as e:
@@ -383,3 +387,4 @@ class EscrowManager:
 
 
 escrow_manager = EscrowManager()
+                    
