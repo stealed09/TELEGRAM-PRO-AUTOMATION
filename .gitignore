@@ -1,0 +1,19 @@
+# Sessions
+sessions/
+*.session
+
+# Database
+*.db
+*.db-journal
+
+# Environment
+.env
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Virtual environment
+venv/
+.venv/
