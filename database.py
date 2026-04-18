@@ -6,7 +6,7 @@ from config import DB_NAME
 class Database:
     def __init__(self):
         self.db_name = DB_NAME
-    
+
     async def init_db(self):
         async with aiosqlite.connect(self.db_name) as db:
             # Users table
@@ -19,7 +19,7 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
+
             # Accounts table (WITH PASSWORD)
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -35,7 +35,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Scheduled messages
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS scheduled_messages (
@@ -52,7 +52,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Auto reply rules
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS auto_reply_rules (
@@ -65,7 +65,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Escrow deals
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS escrow_deals (
@@ -73,13 +73,14 @@ class Database:
                     user_id INTEGER,
                     account_id INTEGER,
                     chat_id INTEGER,
-                    deal_type TEXT,
+                    deal_description TEXT,
+                    paying_name TEXT,
                     amount REAL,
-                    max_time TEXT,
-                    terms TEXT,
-                    seller_id TEXT,
-                    buyer_id TEXT,
-                    buyer_bank TEXT,
+                    time_to_finish TEXT,
+                    refund_condition TEXT,
+                    release_condition TEXT,
+                    seller TEXT,
+                    buyer TEXT,
                     status TEXT DEFAULT 'pending',
                     buyer_agreed BOOLEAN DEFAULT 0,
                     seller_agreed BOOLEAN DEFAULT 0,
@@ -88,7 +89,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Escrow groups
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS escrow_groups (
@@ -102,7 +103,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Bot settings
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS bot_settings (
@@ -112,7 +113,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Sent messages log
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS sent_messages (
@@ -125,7 +126,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Analytics
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS analytics (
@@ -137,7 +138,7 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Broadcasts
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS broadcasts (
@@ -150,7 +151,7 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
+
             # Group auto messages
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS group_auto_messages (
@@ -167,12 +168,12 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             # Access requests
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS access_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
+                    user_id INTEGER UNIQUE,
                     username TEXT,
                     first_name TEXT,
                     last_name TEXT,
@@ -183,10 +184,11 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
-            
+
             await db.commit()
-    
-    # User operations
+
+    # ============ USER OPERATIONS ============
+
     async def add_user(self, user_id, username=None, first_name=None, last_name=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -194,15 +196,15 @@ class Database:
                 (user_id, username, first_name, last_name)
             )
             await db.commit()
-    
-    # Account operations (WITH PASSWORD STORAGE)
+
+    # ============ ACCOUNT OPERATIONS (WITH PASSWORD STORAGE) ============
+
     async def add_account(self, user_id, phone, api_id, api_hash, session_string, password=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
                 'UPDATE accounts SET is_active = 0 WHERE user_id = ?',
                 (user_id,)
             )
-            
             cursor = await db.execute(
                 '''INSERT INTO accounts (user_id, phone, api_id, api_hash, password, session_string, is_active)
                    VALUES (?, ?, ?, ?, ?, ?, 1)''',
@@ -210,7 +212,7 @@ class Database:
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_active_account(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -220,7 +222,7 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
-    
+
     async def get_all_accounts(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -230,7 +232,7 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def set_active_account(self, user_id, account_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -242,7 +244,7 @@ class Database:
                 (account_id, user_id)
             )
             await db.commit()
-    
+
     async def delete_account(self, account_id, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -250,41 +252,42 @@ class Database:
                 (account_id, user_id)
             )
             await db.commit()
-    
-    # Scheduled messages
+
+    # ============ SCHEDULED MESSAGES ============
+
     async def add_scheduled_message(self, user_id, account_id, target, message, schedule_time, is_recurring=False, recurring_pattern=None):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
-                '''INSERT INTO scheduled_messages 
+                '''INSERT INTO scheduled_messages
                    (user_id, account_id, target, message, schedule_time, is_recurring, recurring_pattern)
                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
                 (user_id, account_id, target, message, schedule_time, is_recurring, recurring_pattern)
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_pending_schedules(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                '''SELECT * FROM scheduled_messages 
-                   WHERE user_id = ? AND is_sent = 0 
+                '''SELECT * FROM scheduled_messages
+                   WHERE user_id = ? AND is_sent = 0
                    ORDER BY schedule_time''',
                 (user_id,)
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def get_due_schedules(self):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                '''SELECT * FROM scheduled_messages 
+                '''SELECT * FROM scheduled_messages
                    WHERE is_sent = 0 AND schedule_time <= datetime('now')'''
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def mark_schedule_sent(self, schedule_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -292,7 +295,7 @@ class Database:
                 (schedule_id,)
             )
             await db.commit()
-    
+
     async def delete_schedule(self, schedule_id, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -300,15 +303,15 @@ class Database:
                 (schedule_id, user_id)
             )
             await db.commit()
-    
-    # Auto reply operations
+
+    # ============ AUTO REPLY ============
+
     async def add_auto_reply(self, user_id, account_id, reply_text):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
                 'UPDATE auto_reply_rules SET is_active = 0 WHERE user_id = ? AND account_id = ?',
                 (user_id, account_id)
             )
-            
             cursor = await db.execute(
                 '''INSERT INTO auto_reply_rules (user_id, account_id, reply_text)
                    VALUES (?, ?, ?)''',
@@ -316,7 +319,7 @@ class Database:
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_auto_reply(self, user_id, account_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -326,7 +329,7 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
-    
+
     async def delete_auto_reply(self, user_id, account_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -334,21 +337,31 @@ class Database:
                 (user_id, account_id)
             )
             await db.commit()
-    
-    # Escrow operations
+
+    # ============ ESCROW OPERATIONS (NEW FORM FIELDS) ============
+
     async def create_escrow_deal(self, user_id, account_id, chat_id, deal_data):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
-                '''INSERT INTO escrow_deals 
-                   (user_id, account_id, chat_id, deal_type, amount, max_time, terms, seller_id, buyer_id, buyer_bank)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (user_id, account_id, chat_id, deal_data['deal_type'], deal_data['amount'],
-                 deal_data['max_time'], deal_data.get('terms', 'N/A'), deal_data['seller_id'],
-                 deal_data['buyer_id'], deal_data.get('buyer_bank', 'N/A'))
+                '''INSERT INTO escrow_deals
+                   (user_id, account_id, chat_id, deal_description, paying_name, amount,
+                    time_to_finish, refund_condition, release_condition, seller, buyer)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    user_id, account_id, chat_id,
+                    deal_data.get('deal_description', ''),
+                    deal_data.get('paying_name', ''),
+                    deal_data.get('amount', 0),
+                    deal_data.get('time_to_finish', ''),
+                    deal_data.get('refund_condition', ''),
+                    deal_data.get('release_condition', ''),
+                    deal_data.get('seller', ''),
+                    deal_data.get('buyer', '')
+                )
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_escrow_deal(self, deal_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -358,8 +371,9 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
-    
-    # Escrow groups operations
+
+    # ============ ESCROW GROUPS ============
+
     async def add_escrow_group(self, user_id, account_id, group_id, group_name):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
@@ -369,7 +383,7 @@ class Database:
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_escrow_groups(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -379,7 +393,7 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def toggle_escrow_group(self, group_db_id, user_id, is_active):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -387,8 +401,9 @@ class Database:
                 (is_active, group_db_id, user_id)
             )
             await db.commit()
-    
-    # Bot settings
+
+    # ============ BOT SETTINGS ============
+
     async def get_user_setting(self, user_id, setting_key):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -398,18 +413,19 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return row[setting_key] if row else True
-    
+
     async def set_user_setting(self, user_id, setting_key, value):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                f'''INSERT INTO bot_settings (user_id, {setting_key}) 
+                f'''INSERT INTO bot_settings (user_id, {setting_key})
                     VALUES (?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET {setting_key} = ?''',
                 (user_id, value, value)
             )
             await db.commit()
-    
-    # Sent messages log
+
+    # ============ SENT MESSAGES LOG ============
+
     async def log_sent_message(self, user_id, account_id, target, message):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -417,7 +433,7 @@ class Database:
                 (user_id, account_id, target, message)
             )
             await db.commit()
-    
+
     async def get_sent_messages(self, user_id, limit=50):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -427,8 +443,9 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
-    # Analytics
+
+    # ============ ANALYTICS ============
+
     async def log_action(self, user_id, action_type, details=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -436,51 +453,34 @@ class Database:
                 (user_id, action_type, json.dumps(details) if details else None)
             )
             await db.commit()
-    
+
     async def get_user_analytics(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute(
-                'SELECT COUNT(*) as count FROM sent_messages WHERE user_id = ?',
-                (user_id,)
+                'SELECT COUNT(*) FROM sent_messages WHERE user_id = ?', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                total_sent = row[0]
-            
+                total_sent = (await cursor.fetchone())[0]
             async with db.execute(
-                'SELECT COUNT(*) as count FROM scheduled_messages WHERE user_id = ? AND is_sent = 0',
-                (user_id,)
+                'SELECT COUNT(*) FROM scheduled_messages WHERE user_id = ? AND is_sent = 0', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                active_schedules = row[0]
-            
+                active_schedules = (await cursor.fetchone())[0]
             async with db.execute(
-                'SELECT COUNT(*) as count FROM auto_reply_rules WHERE user_id = ? AND is_active = 1',
-                (user_id,)
+                'SELECT COUNT(*) FROM auto_reply_rules WHERE user_id = ? AND is_active = 1', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                active_replies = row[0]
-            
+                active_replies = (await cursor.fetchone())[0]
             async with db.execute(
-                'SELECT COUNT(*) as count FROM escrow_deals WHERE user_id = ?',
-                (user_id,)
+                'SELECT COUNT(*) FROM escrow_deals WHERE user_id = ?', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                total_deals = row[0]
-            
+                total_deals = (await cursor.fetchone())[0]
             async with db.execute(
-                'SELECT COUNT(*) as count FROM accounts WHERE user_id = ?',
-                (user_id,)
+                'SELECT COUNT(*) FROM accounts WHERE user_id = ?', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                total_accounts = row[0]
-            
+                total_accounts = (await cursor.fetchone())[0]
             async with db.execute(
-                'SELECT COUNT(*) as count FROM accounts WHERE user_id = ? AND is_active = 1',
-                (user_id,)
+                'SELECT COUNT(*) FROM accounts WHERE user_id = ? AND is_active = 1', (user_id,)
             ) as cursor:
-                row = await cursor.fetchone()
-                active_accounts = row[0]
-            
+                active_accounts = (await cursor.fetchone())[0]
+
             return {
                 'total_sent': total_sent,
                 'active_schedules': active_schedules,
@@ -489,8 +489,9 @@ class Database:
                 'total_accounts': total_accounts,
                 'active_accounts': active_accounts
             }
-    
-    # Broadcast operations
+
+    # ============ BROADCAST ============
+
     async def create_broadcast(self, admin_id, message, total_users):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
@@ -499,7 +500,7 @@ class Database:
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def update_broadcast_progress(self, broadcast_id, sent_count, status='sending'):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -507,25 +508,45 @@ class Database:
                 (sent_count, status, broadcast_id)
             )
             await db.commit()
-    
+
     async def get_all_user_ids(self):
+        """Get all user IDs (for broadcast to all)"""
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute('SELECT DISTINCT user_id FROM users') as cursor:
                 rows = await cursor.fetchall()
                 return [row[0] for row in rows]
-    
-    # Group auto message operations
+
+    async def get_approved_user_ids(self):
+        """Get only approved user IDs"""
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute(
+                "SELECT DISTINCT user_id FROM access_requests WHERE status = 'approved'"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+
+    async def get_unapproved_user_ids(self):
+        """Get pending/unapproved user IDs"""
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute(
+                "SELECT DISTINCT user_id FROM access_requests WHERE status = 'pending'"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+
+    # ============ GROUP AUTO MESSAGES ============
+
     async def add_group_auto_message(self, user_id, account_id, group_id, group_name, message, interval_minutes):
         async with aiosqlite.connect(self.db_name) as db:
             cursor = await db.execute(
-                '''INSERT INTO group_auto_messages 
+                '''INSERT INTO group_auto_messages
                    (user_id, account_id, group_id, group_name, message, interval_minutes)
                    VALUES (?, ?, ?, ?, ?, ?)''',
                 (user_id, account_id, str(group_id), group_name, message, interval_minutes)
             )
             await db.commit()
             return cursor.lastrowid
-    
+
     async def get_user_group_messages(self, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -535,7 +556,7 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def get_all_active_group_messages(self):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -544,7 +565,7 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
+
     async def update_group_message_last_sent(self, message_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -552,7 +573,7 @@ class Database:
                 (message_id,)
             )
             await db.commit()
-    
+
     async def delete_group_auto_message(self, message_id, user_id):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -560,18 +581,39 @@ class Database:
                 (message_id, user_id)
             )
             await db.commit()
-    
-    # Access request operations
+
+    # ============ ACCESS REQUEST OPERATIONS ============
+
     async def create_access_request(self, user_id, username, first_name, last_name):
+        """Create or update access request (upsert)"""
         async with aiosqlite.connect(self.db_name) as db:
-            cursor = await db.execute(
-                '''INSERT INTO access_requests (user_id, username, first_name, last_name)
-                   VALUES (?, ?, ?, ?)''',
-                (user_id, username, first_name, last_name)
-            )
-            await db.commit()
-            return cursor.lastrowid
-    
+            # Check if request already exists
+            async with db.execute(
+                'SELECT id, status FROM access_requests WHERE user_id = ?', (user_id,)
+            ) as cursor:
+                existing = await cursor.fetchone()
+
+            if existing:
+                if existing[1] == 'rejected':
+                    # Allow re-request if previously rejected
+                    await db.execute(
+                        '''UPDATE access_requests
+                           SET status = 'pending', requested_at = datetime('now'),
+                               username = ?, first_name = ?, last_name = ?
+                           WHERE user_id = ?''',
+                        (username, first_name, last_name, user_id)
+                    )
+                    await db.commit()
+                return existing[0]
+            else:
+                cursor = await db.execute(
+                    '''INSERT INTO access_requests (user_id, username, first_name, last_name)
+                       VALUES (?, ?, ?, ?)''',
+                    (user_id, username, first_name, last_name)
+                )
+                await db.commit()
+                return cursor.lastrowid
+
     async def get_pending_access_requests(self):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
@@ -580,28 +622,31 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
-    
-    async def approve_access_request(self, request_id, admin_id):
+
+    async def approve_access_request(self, user_id, admin_id):
+        """Approve by user_id"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                '''UPDATE access_requests 
+                '''UPDATE access_requests
                    SET status = 'approved', approved_at = datetime('now'), approved_by = ?
-                   WHERE id = ?''',
-                (admin_id, request_id)
+                   WHERE user_id = ?''',
+                (admin_id, user_id)
             )
             await db.commit()
-    
-    async def reject_access_request(self, request_id, admin_id):
+
+    async def reject_access_request(self, user_id, admin_id):
+        """Reject by user_id"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                '''UPDATE access_requests 
+                '''UPDATE access_requests
                    SET status = 'rejected', approved_at = datetime('now'), approved_by = ?
-                   WHERE id = ?''',
-                (admin_id, request_id)
+                   WHERE user_id = ?''',
+                (admin_id, user_id)
             )
             await db.commit()
-    
+
     async def check_user_access(self, user_id):
+        """Returns: 'approved', 'pending', 'rejected', or None"""
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute(
                 "SELECT status FROM access_requests WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1",
@@ -609,26 +654,30 @@ class Database:
             ) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else None
-    
-    # Admin: Get all users with accounts (SHOWS PASSWORD, API ID, API HASH)
+
+    # ============ ADMIN: VIEW ALL USERS WITH FULL ACCOUNT DETAILS ============
+
     async def get_all_users_with_accounts(self):
+        """Admin: shows API ID, API HASH, PHONE, PASSWORD for every account"""
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                '''SELECT 
-                       u.user_id, 
-                       u.username, 
+                '''SELECT
+                       u.user_id,
+                       u.username,
                        u.first_name,
                        u.last_name,
                        a.id as account_id,
-                       a.phone, 
-                       a.api_id, 
-                       a.api_hash, 
+                       a.phone,
+                       a.api_id,
+                       a.api_hash,
                        a.password,
-                       a.is_active, 
-                       a.created_at
+                       a.is_active,
+                       a.created_at,
+                       ar.status as access_status
                    FROM users u
                    LEFT JOIN accounts a ON u.user_id = a.user_id
+                   LEFT JOIN access_requests ar ON u.user_id = ar.user_id
                    ORDER BY a.created_at DESC'''
             ) as cursor:
                 rows = await cursor.fetchall()
