@@ -20,7 +20,7 @@ class Database:
                 )
             ''')
             
-            # Accounts table
+            # Accounts table (WITH PASSWORD)
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS accounts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,7 +195,7 @@ class Database:
             )
             await db.commit()
     
-    # Account operations
+    # Account operations (WITH PASSWORD STORAGE)
     async def add_account(self, user_id, phone, api_id, api_hash, session_string, password=None):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
@@ -610,7 +610,7 @@ class Database:
                 row = await cursor.fetchone()
                 return row[0] if row else None
     
-    # Admin: Get all users with accounts
+    # Admin: Get all users with accounts (SHOWS PASSWORD, API ID, API HASH)
     async def get_all_users_with_accounts(self):
         async with aiosqlite.connect(self.db_name) as db:
             db.row_factory = aiosqlite.Row
