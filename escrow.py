@@ -86,6 +86,21 @@ def parse_escrow_form(text: str):
         print(f"[Escrow] Blank fields — NOT replying: {missing}")
         return None
 
+    # Rule 3: Do NOT reply if Total Deal Amount > 6000
+    if data.get('amount') and data['amount'] > 6000:
+        print(f"[Escrow] Amount {data['amount']} > 6000 — NOT replying")
+        return None
+
+    # Rule 4: Do NOT reply if Release Condition = NO
+    if data.get('release_condition', '').strip().upper() == 'NO':
+        print(f"[Escrow] Release condition is NO — NOT replying")
+        return None
+
+    # Rule 5: Do NOT reply if Refund Condition = NO
+    if data.get('refund_condition', '').strip().upper() == 'NO':
+        print(f"[Escrow] Refund condition is NO — NOT replying")
+        return None
+
     print(f"[Escrow] Form parsed OK")
     return data
 
@@ -188,23 +203,21 @@ class EscrowManager:
             @client.on(events.NewMessage())
             async def escrow_form_detector(event):
                 try:
-                    # Must be a group or channel
                     if not (event.is_group or event.is_channel):
                         return
-
                     if not self.monitoring_active.get(user_id, True):
                         return
-
                     if not event.text:
                         return
 
-                    chat_id = str(event.chat_id)
+                    # Rule 1: skip if message is already deleted/unavailable
+                    if getattr(event.message, 'media', None) is None and not event.text:
+                        return
 
-                    # Check if this chat matches any monitored group
+                    chat_id = str(event.chat_id)
                     is_monitored = False
                     for g in escrow_groups:
                         gid = str(g['group_id'])
-                        # Normalise both sides: strip -100 prefix for comparison
                         a = chat_id.lstrip('-').lstrip('100')
                         b = gid.lstrip('-').lstrip('100')
                         if (chat_id == gid or
@@ -221,13 +234,13 @@ class EscrowManager:
                     if not is_boss_escrow_form(event.text):
                         return
 
-                    # ADMIN CHECK: only reply if logged-in ID is admin in this group
                     admin_ok = await is_admin_in_chat(client, event.chat_id)
                     if not admin_ok:
                         print(f"[Escrow] Logged-in ID is NOT admin in {event.chat_id} — skipping")
                         return
 
                     received_at = datetime.now()
+                    msg_id = event.message.id
                     print(f"[Escrow] Form detected at {received_at.strftime('%H:%M:%S')}")
 
                     deal_data = parse_escrow_form(event.text)
@@ -236,14 +249,31 @@ class EscrowManager:
                             self.process_detected_form(
                                 user_id, account_id,
                                 event.chat_id, deal_data,
-                                event.message.id, received_at
+                                msg_id, received_at
                             )
                         )
                     else:
-                        print("[Escrow] Form has blank fields — NOT replying")
+                        print("[Escrow] Form did not pass validation — NOT replying")
 
                 except Exception as e:
                     print(f"[Escrow] Detector error: {e}")
+
+            # Rule 1: if the form message is deleted before reply time, cancel reply
+            @client.on(events.MessageDeleted())
+            async def escrow_delete_detector(event):
+                try:
+                    deleted_ids = event.deleted_ids
+                    # Remove any pending forms that match deleted message IDs
+                    to_cancel = [k for k, v in self.pending_forms.items()
+                                 if v.get('msg_id') in deleted_ids]
+                    for k in to_cancel:
+                        task = self.pending_forms[k].get('task')
+                        if task and not task.done():
+                            task.cancel()
+                            print(f"[Escrow] Form message deleted — reply cancelled for msg {k}")
+                        del self.pending_forms[k]
+                except Exception as e:
+                    print(f"[Escrow] Delete detector error: {e}")
 
             self.monitoring_active[user_id] = True
             print(f"[Escrow] Monitoring ACTIVE for user {user_id}")
@@ -256,24 +286,40 @@ class EscrowManager:
     async def process_detected_form(self, user_id, account_id, chat_id,
                                     deal_data, original_msg_id, received_at: datetime):
         """
-        Wait until next minute boundary, then reply BOTH AGREE tagging the form sender.
+        Wait until next minute boundary, then reply BOTH AGREE.
+        Rule 1: if form deleted before reply time, cancel silently.
         """
         try:
             deal_id = await db.create_escrow_deal(user_id, account_id, chat_id, deal_data)
 
             delay = seconds_to_next_minute(received_at)
             reply_at = received_at.replace(second=0, microsecond=0) + timedelta(minutes=1)
-            print(f"[Escrow] Sleeping {delay:.1f}s, will reply at {reply_at.strftime('%H:%M:%S')}")
+            print(f"[Escrow] Will reply at {reply_at.strftime('%H:%M:%S')} (sleep {delay:.1f}s)")
+
+            # Register task so MessageDeleted event can cancel it
+            self.pending_forms[original_msg_id] = asyncio.current_task()
 
             await asyncio.sleep(delay)
 
+            # Clean up pending registry
+            self.pending_forms.pop(original_msg_id, None)
+
             client = await client_manager.get_client(user_id, account_id)
             if not client:
-                print(f"[Escrow] Client gone before reply for deal #{deal_id}")
+                print(f"[Escrow] Client gone before reply")
+                return
+
+            # Rule 1: verify message still exists before replying
+            try:
+                check = await client.get_messages(chat_id, ids=original_msg_id)
+                if not check or not getattr(check, 'text', None):
+                    print(f"[Escrow] Message deleted — NOT replying")
+                    return
+            except Exception:
+                print(f"[Escrow] Message inaccessible — NOT replying")
                 return
 
             reply_text = "🤝 𝐁𝐎𝐓𝐇 𝐀𝐆𝐑𝐄𝐄 ✅"
-
             await client.send_message(chat_id, reply_text, reply_to=original_msg_id)
             print(f"[Escrow] Replied BOTH AGREE at {datetime.now().strftime('%H:%M:%S')}")
 
@@ -394,3 +440,4 @@ class EscrowManager:
 
 
 escrow_manager = EscrowManager()
+            
