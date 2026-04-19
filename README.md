@@ -110,3 +110,7 @@ The bot monitors configured groups for the **Boss Escrow Deal** form.
 ## 📄 License
 
 For personal use only. Do not redistribute.
+
+CREDIT GOES TO 
+TELEGRAM USER
+@TALK_WITH_STEALED
