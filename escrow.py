@@ -292,14 +292,18 @@ class EscrowManager:
         try:
             deal_id = await db.create_escrow_deal(user_id, account_id, chat_id, deal_data)
 
-            delay = seconds_to_next_minute(received_at)
+            # Compute exact target time ONCE
             reply_at = received_at.replace(second=0, microsecond=0) + timedelta(minutes=1)
-            print(f"[Escrow] Will reply at {reply_at.strftime('%H:%M:%S')} (sleep {delay:.1f}s)")
+            delay = (reply_at - datetime.now()).total_seconds()
+            print(f"[Escrow] Will reply at {reply_at.strftime('%H:%M:%S')} (sleep {delay:.2f}s)")
 
             # Register task so MessageDeleted event can cancel it
             self.pending_forms[original_msg_id] = asyncio.current_task()
 
-            await asyncio.sleep(delay)
+            # Sleep most of the wait, then spin the last 50ms for precision
+            await asyncio.sleep(max(0, delay - 0.05))
+            while datetime.now() < reply_at:
+                await asyncio.sleep(0.001)
 
             # Clean up pending registry
             self.pending_forms.pop(original_msg_id, None)
@@ -440,4 +444,4 @@ class EscrowManager:
 
 
 escrow_manager = EscrowManager()
-            
+        
